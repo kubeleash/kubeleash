@@ -89,9 +89,10 @@ There are two distinct "no" outcomes, and the audit reason distinguishes them:
 
 ## Architecture
 
-A single static Go binary run as an MCP server (stdio by default; optional
-HTTP/SSE later). Stack: **Go + official MCP `go-sdk` + `client-go`** (dynamic
-client + RESTMapper).
+A single static Go binary run as an MCP server over **stdio**. Stack: **Go +
+official MCP `go-sdk` + `client-go`** (dynamic client + RESTMapper). kubeleash
+is local-only by design — see [Out of scope](#out-of-scope-v1) for why there is
+no HTTP/remote transport.
 
 ### Packages
 
@@ -189,6 +190,9 @@ up front, reducing blind denied calls. Low cost; included.
 - A `scope:` field (the namespace-as-narrowing-filter rule covers cluster vs
   namespaced without it).
 - Per-resource bespoke tools (generic dynamic CRUD covers everything).
-- HTTP/SSE transport (stdio first; can add later).
+- **HTTP/SSE transport and any remote/hosted mode.** Out of scope entirely, not
+  merely deferred: a remote, add-by-URL server would route your cluster
+  credentials through a third party, contradicting kubeleash's whole premise.
+  kubeleash runs locally over stdio against your own kubeconfig.
 - Multi-tenant namespace scoping as a first-class concern beyond the optional
   namespace axis (run a separate server per kubeconfig if needed).
