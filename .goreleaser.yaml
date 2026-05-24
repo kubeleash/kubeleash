@@ -44,46 +44,55 @@ signs:
       - "--yes"
     artifacts: checksum
 
-dockers:
-  - image_templates:
-      - "ghcr.io/kubeleash/kubeleash:{{ .Version }}-amd64"
+# dockers_v2 uses buildx to build a multi-arch image + manifest in one step
+# (replaces the old dockers + docker_manifests pair). The Dockerfile selects the
+# right binary via TARGETOS/TARGETARCH from the per-platform build context.
+dockers_v2:
+  - id: kubeleash
+    ids: [kubeleash]
+    images:
+      - "ghcr.io/kubeleash/kubeleash"
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
     dockerfile: Dockerfile
-    use: buildx
-    build_flag_templates:
-      - "--platform=linux/amd64"
-    goarch: amd64
-  - image_templates:
-      - "ghcr.io/kubeleash/kubeleash:{{ .Version }}-arm64"
-    dockerfile: Dockerfile
-    use: buildx
-    build_flag_templates:
-      - "--platform=linux/arm64"
-    goarch: arm64
-
-docker_manifests:
-  - name_template: "ghcr.io/kubeleash/kubeleash:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/kubeleash/kubeleash:{{ .Version }}-amd64"
-      - "ghcr.io/kubeleash/kubeleash:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/kubeleash/kubeleash:latest"
-    image_templates:
-      - "ghcr.io/kubeleash/kubeleash:{{ .Version }}-amd64"
-      - "ghcr.io/kubeleash/kubeleash:{{ .Version }}-arm64"
+    sbom: true
+    annotations:
+      "org.opencontainers.image.source": "https://github.com/kubeleash/kubeleash"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.licenses": "Apache-2.0"
 
 docker_signs:
   - cmd: cosign
     args: ["sign", "--yes", "${artifact}"]
     artifacts: manifests
 
-brews:
-  - repository:
+# homebrew_casks replaces the deprecated `brews` (Homebrew steers pre-built
+# binaries to casks). GoReleaser emits both macOS and Linux entries; casks are
+# best-supported on macOS, so Linux users may prefer `go install` / the
+# container / a release binary.
+homebrew_casks:
+  - name: kubeleash
+    binaries:
+      - kubeleash
+    repository:
       owner: kubeleash
       name: homebrew-tap
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Casks
     homepage: "https://github.com/kubeleash/kubeleash"
     description: "Kubernetes MCP server that keeps AI agents on a leash"
-    license: "Apache-2.0"
-    directory: Formula
+    # macOS quarantines unsigned downloaded binaries; strip it on install so
+    # `kubeleash` runs without a Gatekeeper prompt. (We are not notarized.)
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/kubeleash"]
+          end
 
 changelog:
   use: github
