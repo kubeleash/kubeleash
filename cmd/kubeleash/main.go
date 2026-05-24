@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+//
 // Command kubeleash is a Kubernetes MCP server that enforces RBAC-style,
 // context-scoped access control for AI agents. See docs/ for the design.
 //
