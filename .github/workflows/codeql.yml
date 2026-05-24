@@ -16,6 +16,7 @@ jobs:
     name: Analyze (Go)
     runs-on: ubuntu-latest
     permissions:
+      actions: read # required for CodeQL on private repos
       security-events: write
       contents: read
     steps:
