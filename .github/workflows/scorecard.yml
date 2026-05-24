@@ -1,11 +1,15 @@
 name: Scorecard
 
 on:
-  branch_protection_rule:
-  schedule:
-    - cron: "32 5 * * 1"
-  push:
-    branches: [main]
+  # Scorecard publishes via code scanning (GitHub Advanced Security), which is
+  # unavailable on this private repo's plan. Manual-only until kubeleash is
+  # public; then uncomment the triggers below.
+  workflow_dispatch:
+  # branch_protection_rule:
+  # schedule:
+  #   - cron: "32 5 * * 1"
+  # push:
+  #   branches: [main]
 
 permissions:
   contents: read
