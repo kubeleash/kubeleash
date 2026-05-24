@@ -23,7 +23,10 @@ jobs:
         with:
           go-version-file: go.mod
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        # v8 installs golangci-lint v2, built with a Go toolchain new enough to
+        # lint a module targeting the go.mod version. v6 pins v1, which fails
+        # when go.mod targets a newer Go than the linter was built with.
+        uses: golangci/golangci-lint-action@v8
         with:
           version: latest
 
