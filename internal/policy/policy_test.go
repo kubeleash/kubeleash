@@ -51,6 +51,27 @@ func crdWidget() policy.Resource {
 }
 
 // ---------------------------------------------------------------------------
+// Fail-safe zero-value test
+// ---------------------------------------------------------------------------
+
+// TestDecisionZeroValueIsDenied asserts the fail-safe invariant: a zero-value
+// Decision must never report Allowed. This guards against accidental
+// fail-open behaviour (e.g. an uninitialised Decision short-circuiting the
+// policy gate). The Outcome constants are ordered so that NotGranted == 0.
+func TestDecisionZeroValueIsDenied(t *testing.T) {
+	t.Parallel()
+
+	var d policy.Decision
+	if d.Allowed() {
+		t.Fatal("zero-value Decision must NOT be allowed (fail-safe default-deny violated)")
+	}
+
+	if d.Outcome == policy.Allowed {
+		t.Fatal("zero-value Decision Outcome must not equal Allowed")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Evaluate tests
 // ---------------------------------------------------------------------------
 

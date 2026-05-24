@@ -111,12 +111,15 @@ type Request struct {
 type Outcome int
 
 const (
+	// NotGranted is the zero value: absent any explicit decision, nothing is
+	// granted. This is intentional — a zero-value Decision must be denied so
+	// that an uninitialised or accidentally-dropped Decision fails safe
+	// (default-deny, never fail-open).
+	NotGranted Outcome = iota
 	// Allowed means an allow rule covered the request and no deny rule fired.
-	Allowed Outcome = iota
+	Allowed
 	// ExplicitDeny means a deny rule fired; the agent should not retry.
 	ExplicitDeny
-	// NotGranted means no allow rule covered the request (default deny).
-	NotGranted
 )
 
 // Decision is the full result of [Engine.Evaluate].
