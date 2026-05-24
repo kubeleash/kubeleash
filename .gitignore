@@ -14,6 +14,10 @@ coverage.*
 # Local policy/config used during development
 *.local.yaml
 
+# Internal AI-assisted dev artifacts (design specs, implementation plans) —
+# kept local, never committed to this public-facing project.
+/docs/superpowers/
+
 # Editor / OS cruft
 .DS_Store
 .idea/
