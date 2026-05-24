@@ -1,0 +1,95 @@
+version: 2
+
+project_name: kubeleash
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: kubeleash
+    main: ./cmd/kubeleash
+    binary: kubeleash
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+
+dockers:
+  - image_templates:
+      - "ghcr.io/kubeleash/kubeleash:{{ .Version }}-amd64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+    goarch: amd64
+  - image_templates:
+      - "ghcr.io/kubeleash/kubeleash:{{ .Version }}-arm64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+    goarch: arm64
+
+docker_manifests:
+  - name_template: "ghcr.io/kubeleash/kubeleash:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/kubeleash/kubeleash:{{ .Version }}-amd64"
+      - "ghcr.io/kubeleash/kubeleash:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/kubeleash/kubeleash:latest"
+    image_templates:
+      - "ghcr.io/kubeleash/kubeleash:{{ .Version }}-amd64"
+      - "ghcr.io/kubeleash/kubeleash:{{ .Version }}-arm64"
+
+docker_signs:
+  - cmd: cosign
+    args: ["sign", "--yes", "${artifact}"]
+    artifacts: manifests
+
+brews:
+  - repository:
+      owner: kubeleash
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/kubeleash/kubeleash"
+    description: "Kubernetes MCP server that keeps AI agents on a leash"
+    license: "Apache-2.0"
+    directory: Formula
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^test:"
