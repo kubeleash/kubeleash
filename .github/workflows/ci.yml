@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # The kube-layer tests use controller-runtime's envtest, which needs a
+      # local control plane. setup-envtest downloads the matching binaries and
+      # KUBEBUILDER_ASSETS points the tests at them. Harmless until those tests
+      # exist; required once internal/kube lands.
+      - name: Install setup-envtest
+        run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+      - name: Provision envtest assets
+        run: echo "KUBEBUILDER_ASSETS=$(setup-envtest use -p path)" >> "$GITHUB_ENV"
+      - name: Test
+        run: go test -race -coverprofile=coverage.out ./...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build ./...
