@@ -1,0 +1,37 @@
+name: Bug report
+description: Something isn't working as documented
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. For **security** issues, do not use this form —
+        see SECURITY.md.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: policy
+    attributes:
+      label: Relevant policy snippet (redact sensitive values)
+      render: yaml
+  - type: input
+    id: version
+    attributes:
+      label: kubeleash version / commit
+    validations:
+      required: true
+  - type: input
+    id: k8s
+    attributes:
+      label: Kubernetes / client version
