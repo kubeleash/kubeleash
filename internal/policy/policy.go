@@ -350,6 +350,53 @@ func (e *Engine) Evaluate(req Request) Decision {
 }
 
 // ---------------------------------------------------------------------------
+// EffectivePolicy — normalized rules for introspection / --print-effective-policy
+// ---------------------------------------------------------------------------
+
+// EffectivePolicy returns the resolved, normalized policy as a [Config]: the
+// rules exactly as the engine evaluates them, after defaulting (e.g. an omitted
+// resources list becomes ["*"]). It is a pure read over the compiled rules and
+// performs no cluster I/O. Verbs are emitted in a stable, sorted order so the
+// output is deterministic. This powers --print-effective-policy, letting an
+// operator confirm what the engine actually enforces rather than re-reading the
+// raw file.
+func (e *Engine) EffectivePolicy() Config {
+	cfg := Config{Policies: make([]Rule, 0, len(e.rules))}
+
+	for _, r := range e.rules {
+		rule := Rule{
+			Contexts:   r.contextsRaw,
+			Namespaces: r.namespaces,
+			Allow:      effectiveRuleSet(r.allow),
+			Deny:       effectiveRuleSet(r.deny),
+		}
+		cfg.Policies = append(cfg.Policies, rule)
+	}
+
+	return cfg
+}
+
+// effectiveRuleSet renders a compiled rule set back into an exported [RuleSet]
+// with normalized resources and stably-sorted verbs. A nil input yields nil.
+func effectiveRuleSet(rs *compiledRuleSet) *RuleSet {
+	if rs == nil {
+		return nil
+	}
+
+	verbs := make([]string, 0, len(rs.verbs))
+	for v := range rs.verbs {
+		verbs = append(verbs, string(v))
+	}
+
+	sort.Strings(verbs)
+
+	return &RuleSet{
+		Resources: rs.resources,
+		Verbs:     verbs,
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Capabilities — read-only policy introspection (no cluster I/O)
 // ---------------------------------------------------------------------------
 

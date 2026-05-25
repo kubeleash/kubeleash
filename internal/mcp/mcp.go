@@ -21,6 +21,7 @@ package mcp
 import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kubeleash/kubeleash/internal/audit"
 	"github.com/kubeleash/kubeleash/internal/kube"
 	"github.com/kubeleash/kubeleash/internal/policy"
 )
@@ -42,17 +43,46 @@ type Server struct {
 	engine  *policy.Engine
 	factory ClientFactory
 	srv     *mcp.Server
+
+	// audit records every decision (allowed and denied). A nil *audit.Logger is
+	// a safe no-op, so the zero value of Server never panics on logging.
+	audit *audit.Logger
+	// dryRun, when true, suppresses cluster mutation/read I/O on ALLOWED
+	// decisions and returns a would-do result instead. It NEVER relaxes the
+	// gate: denied calls remain denied with zero I/O.
+	dryRun bool
+}
+
+// Option configures a [Server] at construction. Use functional options so the
+// minimal New(engine, factory) call site keeps compiling as features are added.
+type Option func(*Server)
+
+// WithAudit injects the audit logger used to record every policy decision. If
+// omitted (or given nil), auditing is a no-op.
+func WithAudit(logger *audit.Logger) Option {
+	return func(s *Server) { s.audit = logger }
+}
+
+// WithDryRun enables dry-run mode: allowed calls are logged and reported as
+// would-do without touching the cluster. It does not affect denials.
+func WithDryRun(dryRun bool) Option {
+	return func(s *Server) { s.dryRun = dryRun }
 }
 
 // New builds a Server, registering all kubeleash tools on a fresh MCP server.
 // Both engine and factory are required; passing nil for either is a programming
 // error and will surface as a panic on first use rather than a silent
-// fail-open.
-func New(engine *policy.Engine, factory ClientFactory) *Server {
+// fail-open. Audit and dry-run are configured via functional options; with no
+// audit option, auditing is a nil-safe no-op.
+func New(engine *policy.Engine, factory ClientFactory, opts ...Option) *Server {
 	s := &Server{
 		engine:  engine,
 		factory: factory,
 		srv:     mcp.NewServer(&mcp.Implementation{Name: "kubeleash", Version: version}, nil),
+	}
+
+	for _, opt := range opts {
+		opt(s)
 	}
 
 	s.registerTools()

@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kubeleash/kubeleash/internal/audit"
 	"github.com/kubeleash/kubeleash/internal/kube"
 	"github.com/kubeleash/kubeleash/internal/policy"
 )
@@ -120,17 +121,25 @@ type gateResult struct {
 	resource  policy.Resource
 	scope     kube.Scope
 	namespace string
+	verb      policy.Verb
+	// dryRun is true when the server is in dry-run mode AND the decision was
+	// allowed. The handler MUST NOT touch the cluster; it returns the would-do
+	// result via [Server.wouldDo] instead.
+	dryRun bool
 }
 
 // gate is THE policy choke-point. It resolves the context's client, resolves
 // the resource reference via discovery (the only pre-gate cluster touch),
-// evaluates the policy for verb, and returns a gateResult ONLY if the decision
-// is Allowed. On any deny or error it returns an error and the caller MUST NOT
-// perform cluster I/O. A future audit hook belongs here (one place, both
-// outcomes).
+// evaluates the policy for verb, AUDIT-LOGS the decision (both outcomes), and
+// returns a gateResult ONLY if the decision is Allowed. On any deny or error it
+// returns an error and the caller MUST NOT perform cluster I/O.
+//
+// In dry-run mode an allowed decision sets gateResult.dryRun so the handler
+// short-circuits to a would-do result without cluster I/O; denials are
+// unaffected (still denied, still zero I/O), only logged with dry_run set.
 //
 // INVARIANT: no caller reaches Get/List/Apply/Delete unless gate returns nil
-// error.
+// error AND gateResult.dryRun is false.
 func (s *Server) gate(ctx context.Context, args resourceArgs, verb policy.Verb) (gateResult, error) {
 	c, err := s.factory.Client(args.Context)
 	if err != nil {
@@ -142,7 +151,14 @@ func (s *Server) gate(ctx context.Context, args resourceArgs, verb policy.Verb) 
 		return gateResult{}, fmt.Errorf("mcp: resolve resource %q: %w", args.Resource, err)
 	}
 
+	ns := namespaceFor(scope, args.Namespace)
+
 	decision := s.evaluate(args, res, scope, verb)
+
+	// Audit AFTER the decision is known, before returning. dry_run reflects the
+	// mode for both outcomes.
+	s.recordDecision(args.Context, res, ns, verb, decision)
+
 	if !decision.Allowed() {
 		return gateResult{}, fmt.Errorf("mcp: %s", decision.Reason)
 	}
@@ -151,8 +167,37 @@ func (s *Server) gate(ctx context.Context, args resourceArgs, verb policy.Verb) 
 		client:    c,
 		resource:  res,
 		scope:     scope,
-		namespace: namespaceFor(scope, args.Namespace),
+		namespace: ns,
+		verb:      verb,
+		dryRun:    s.dryRun,
 	}, nil
+}
+
+// recordDecision audit-logs one decision with the server's dry-run mode.
+func (s *Server) recordDecision(ctxName string, res policy.Resource, ns string, verb policy.Verb, d policy.Decision) {
+	s.audit.Record(audit.Record{
+		Context:   ctxName,
+		Resource:  res,
+		Namespace: ns,
+		Verb:      verb,
+		Decision:  d,
+		DryRun:    s.dryRun,
+	})
+}
+
+// wouldDo renders the standard dry-run success result for an allowed,
+// not-executed action.
+func wouldDo(verb policy.Verb, res policy.Resource, ns, name string) *mcp.CallToolResult {
+	target := res.Plural
+	if name != "" {
+		target += " " + name
+	}
+
+	if ns != "" {
+		target += " in namespace " + ns
+	}
+
+	return textResult(fmt.Sprintf("dry-run: would %s %s (policy permitted; no cluster I/O performed)", verb, target))
 }
 
 // evaluate builds the policy.Request and evaluates it. Factored out so the apply
@@ -197,6 +242,10 @@ func (s *Server) listHandler(ctx context.Context, _ *mcp.CallToolRequest, args l
 		return nil, nil, err
 	}
 
+	if g.dryRun {
+		return wouldDo(g.verb, g.resource, g.namespace, ""), nil, nil
+	}
+
 	list, err := g.client.List(ctx, g.resource, g.namespace)
 	if err != nil {
 		return nil, nil, fmt.Errorf("mcp: list: %w", err)
@@ -213,6 +262,10 @@ func (s *Server) getHandler(ctx context.Context, _ *mcp.CallToolRequest, args re
 	g, err := s.gate(ctx, args, policy.VerbGet)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if g.dryRun {
+		return wouldDo(g.verb, g.resource, g.namespace, args.Name), nil, nil
 	}
 
 	obj, err := g.client.Get(ctx, g.resource, g.namespace, args.Name)
@@ -251,19 +304,24 @@ func (s *Server) applyHandler(ctx context.Context, _ *mcp.CallToolRequest, args 
 		return nil, nil, fmt.Errorf("mcp: resolve resource %q: %w", args.Resource, err)
 	}
 
+	ns := namespaceFor(scope, args.Namespace)
+
 	createDecision := s.evaluate(args.resourceArgs, res, scope, policy.VerbCreate)
 	updateDecision := s.evaluate(args.resourceArgs, res, scope, policy.VerbUpdate)
 
 	// Step 2: fully denied => zero cluster I/O (no existence Get).
 	if !createDecision.Allowed() && !updateDecision.Allowed() {
 		// Surface the more actionable reason: prefer an explicit deny over a
-		// bare not-granted so the agent learns it should stop retrying.
-		reason := updateDecision.Reason
+		// bare not-granted so the agent learns it should stop retrying. Audit the
+		// governing deny — the verb/decision that produced the surfaced reason.
+		govVerb, govDecision := policy.VerbUpdate, updateDecision
 		if createDecision.Outcome == policy.ExplicitDeny {
-			reason = createDecision.Reason
+			govVerb, govDecision = policy.VerbCreate, createDecision
 		}
 
-		return nil, nil, fmt.Errorf("mcp: apply: %s", reason)
+		s.recordDecision(args.Context, res, ns, govVerb, govDecision)
+
+		return nil, nil, fmt.Errorf("mcp: apply: %s", govDecision.Reason)
 	}
 
 	obj := &unstructured.Unstructured{Object: args.Manifest}
@@ -273,7 +331,23 @@ func (s *Server) applyHandler(ctx context.Context, _ *mcp.CallToolRequest, args 
 		return nil, nil, fmt.Errorf("mcp: apply: manifest has no metadata.name")
 	}
 
-	ns := namespaceFor(scope, args.Namespace)
+	// Dry-run: the existence Get is itself cluster I/O, so in dry-run we do NOT
+	// probe existence. We cannot determine the concrete verb (create vs update)
+	// without it, so dry-run apply is reported as a create-or-update that WOULD
+	// run, auditing the permittable governing verb (prefer create when allowed).
+	if s.dryRun {
+		govVerb, govDecision := policy.VerbUpdate, updateDecision
+		if createDecision.Allowed() {
+			govVerb, govDecision = policy.VerbCreate, createDecision
+		}
+
+		s.recordDecision(args.Context, res, ns, govVerb, govDecision)
+
+		return textResult(fmt.Sprintf(
+			"dry-run: would apply (create-or-update) %s %s in namespace %q (policy permitted; no cluster I/O performed)",
+			res.Plural, name, ns,
+		)), nil, nil
+	}
 
 	// Step 3: existence check (cluster I/O, justified because at least one verb
 	// is permittable), then concrete-verb evaluation. Only a genuine NotFound
@@ -299,6 +373,10 @@ func (s *Server) applyHandler(ctx context.Context, _ *mcp.CallToolRequest, args 
 		concreteDecision = updateDecision
 	}
 
+	// Audit the concrete verb's decision — the one that actually governs the
+	// outcome now that existence selected create vs update.
+	s.recordDecision(args.Context, res, ns, concrete, concreteDecision)
+
 	if !concreteDecision.Allowed() {
 		return nil, nil, fmt.Errorf("mcp: apply (%s): %s", concrete, concreteDecision.Reason)
 	}
@@ -319,6 +397,10 @@ func (s *Server) deleteHandler(ctx context.Context, _ *mcp.CallToolRequest, args
 	g, err := s.gate(ctx, args, policy.VerbDelete)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if g.dryRun {
+		return wouldDo(g.verb, g.resource, g.namespace, args.Name), nil, nil
 	}
 
 	if derr := g.client.Delete(ctx, g.resource, g.namespace, args.Name); derr != nil {
