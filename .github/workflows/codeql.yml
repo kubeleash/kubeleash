@@ -1,16 +1,14 @@
 name: CodeQL
 
 on:
-  # CodeQL code scanning requires GitHub Advanced Security — free for PUBLIC
-  # repos, unavailable on this private repo's plan. Manual-only for now; when
-  # kubeleash goes public, uncomment the push/pull_request/schedule triggers.
+  # CodeQL code scanning uses GitHub code scanning (free for public repos).
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "27 4 * * 1"
   workflow_dispatch:
-  # push:
-  #   branches: [main]
-  # pull_request:
-  #   branches: [main]
-  # schedule:
-  #   - cron: "27 4 * * 1"
 
 permissions:
   contents: read
