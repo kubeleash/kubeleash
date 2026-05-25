@@ -1,0 +1,22 @@
+{
+  "name": "kubeleash",
+  "owner": {
+    "name": "Diogo Vilela",
+    "email": "diogofsvilela@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "kubeleash",
+      "source": ".",
+      "description": "Kubernetes MCP server with RBAC-style, context-scoped guardrails for AI agents. Requires the `kubeleash` binary on PATH (brew install kubeleash/tap/kubeleash, or go install).",
+      "version": "0.1.0",
+      "author": {
+        "name": "Diogo Vilela",
+        "email": "diogofsvilela@gmail.com"
+      },
+      "homepage": "https://github.com/kubeleash/kubeleash",
+      "license": "Apache-2.0",
+      "keywords": ["kubernetes", "k8s", "mcp", "rbac", "security"]
+    }
+  ]
+}

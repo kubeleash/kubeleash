@@ -1,0 +1,87 @@
+{
+  "manifest_version": "0.3",
+  "name": "kubeleash",
+  "display_name": "kubeleash",
+  "version": "0.1.0",
+  "description": "Kubernetes MCP server with RBAC-style, context-scoped guardrails for AI agents.",
+  "long_description": "kubeleash is a Kubernetes MCP server with a twist: RBAC-style, context-scoped access control for AI agents. Point it at a kubeconfig — even a cluster-admin one — and a local policy file constrains what the agent can actually do, per kube context. Destructive actions are gated before any call reaches the cluster. Deny wins, default-deny, and a broken policy refuses to start — it never fails open. Runs entirely locally over stdio; there is no remote/hosted connector and zero telemetry.",
+  "author": {
+    "name": "Diogo Vilela",
+    "email": "diogofsvilela@gmail.com",
+    "url": "https://github.com/kubeleash/kubeleash"
+  },
+  "homepage": "https://github.com/kubeleash/kubeleash",
+  "documentation": "https://github.com/kubeleash/kubeleash#readme",
+  "support": "https://github.com/kubeleash/kubeleash/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kubeleash/kubeleash"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "kubernetes",
+    "k8s",
+    "mcp",
+    "rbac",
+    "security",
+    "guardrails",
+    "policy"
+  ],
+  "server": {
+    "type": "binary",
+    "entry_point": "kubeleash",
+    "mcp_config": {
+      "command": "${__dirname}/kubeleash",
+      "args": [
+        "--policy",
+        "${user_config.policy_path}",
+        "--log-level",
+        "${user_config.log_level}"
+      ],
+      "env": {
+        "KUBECONFIG": "${user_config.kubeconfig_path}"
+      },
+      "platform_overrides": {
+        "win32": {
+          "command": "${__dirname}/kubeleash.exe"
+        }
+      }
+    }
+  },
+  "user_config": {
+    "policy_path": {
+      "type": "file",
+      "title": "Policy file",
+      "description": "Path to your kubeleash policy.yaml. Required — kubeleash is default-deny and refuses to start without an explicit policy.",
+      "required": true
+    },
+    "kubeconfig_path": {
+      "type": "file",
+      "title": "Kubeconfig file",
+      "description": "Path to the kubeconfig kubeleash should use. Defaults to ~/.kube/config.",
+      "required": false,
+      "default": "${HOME}/.kube/config"
+    },
+    "log_level": {
+      "type": "string",
+      "title": "Log level",
+      "description": "Audit/diagnostics log level: debug, info, warn, or error. The audit log is JSON on stderr.",
+      "required": false,
+      "default": "info"
+    }
+  },
+  "tools": [
+    { "name": "k8s_list", "description": "List Kubernetes objects of a resource type, optionally filtered by namespace and selectors." },
+    { "name": "k8s_get", "description": "Get a single Kubernetes object by name." },
+    { "name": "k8s_apply", "description": "Server-side apply a Kubernetes manifest (create or update depending on existence)." },
+    { "name": "k8s_delete", "description": "Delete a single Kubernetes object by name." },
+    { "name": "k8s_logs", "description": "Read logs from a pod." },
+    { "name": "k8s_exec", "description": "Execute a command in a pod container." },
+    { "name": "k8s_scale", "description": "Scale a workload to a desired replica count." },
+    { "name": "k8s_capabilities", "description": "Report which actions the policy allows in a given kube context. Does not contact the cluster." }
+  ],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "win32", "linux"]
+  }
+}

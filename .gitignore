@@ -3,6 +3,10 @@
 /dist/
 *.exe
 
+# Packaging build artifacts (.mcpb bundle + staged binaries)
+*.mcpb
+/packaging/mcpb/stage/
+
 # Test & coverage artifacts
 *.test
 *.out
