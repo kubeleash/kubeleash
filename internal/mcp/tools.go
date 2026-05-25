@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -176,6 +177,16 @@ func namespaceFor(scope kube.Scope, ns string) string {
 	return ns
 }
 
+// requireName rejects a missing metadata.name for name-targeting verbs,
+// preserving the uniform "mcp: <verb>: name is required" error shape.
+func requireName(verb, name string) error {
+	if name == "" {
+		return fmt.Errorf("mcp: %s: name is required", verb)
+	}
+
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -195,8 +206,8 @@ func (s *Server) listHandler(ctx context.Context, _ *mcp.CallToolRequest, args l
 }
 
 func (s *Server) getHandler(ctx context.Context, _ *mcp.CallToolRequest, args resourceArgs) (*mcp.CallToolResult, any, error) {
-	if args.Name == "" {
-		return nil, nil, fmt.Errorf("mcp: get: name is required")
+	if err := requireName("get", args.Name); err != nil {
+		return nil, nil, err
 	}
 
 	g, err := s.gate(ctx, args, policy.VerbGet)
@@ -265,13 +276,19 @@ func (s *Server) applyHandler(ctx context.Context, _ *mcp.CallToolRequest, args 
 	ns := namespaceFor(scope, args.Namespace)
 
 	// Step 3: existence check (cluster I/O, justified because at least one verb
-	// is permittable), then concrete-verb evaluation.
-	exists := true
+	// is permittable), then concrete-verb evaluation. Only a genuine NotFound
+	// selects create; any other Get error fails closed so we never mis-route a
+	// transient/forbidden failure into the create verb.
+	var exists bool
 
-	if _, gerr := c.Get(ctx, res, ns, name); gerr != nil {
-		// Treat any Get error as "does not exist" for verb selection. A real
-		// not-found yields create; other errors will resurface from Apply.
+	_, gerr := c.Get(ctx, res, ns, name)
+	switch {
+	case gerr == nil:
+		exists = true
+	case apierrors.IsNotFound(gerr):
 		exists = false
+	default:
+		return nil, nil, fmt.Errorf("mcp: apply: existence check: %w", gerr)
 	}
 
 	concrete := policy.VerbCreate
@@ -295,8 +312,8 @@ func (s *Server) applyHandler(ctx context.Context, _ *mcp.CallToolRequest, args 
 }
 
 func (s *Server) deleteHandler(ctx context.Context, _ *mcp.CallToolRequest, args resourceArgs) (*mcp.CallToolResult, any, error) {
-	if args.Name == "" {
-		return nil, nil, fmt.Errorf("mcp: delete: name is required")
+	if err := requireName("delete", args.Name); err != nil {
+		return nil, nil, err
 	}
 
 	g, err := s.gate(ctx, args, policy.VerbDelete)
@@ -319,8 +336,8 @@ func (s *Server) deleteHandler(ctx context.Context, _ *mcp.CallToolRequest, args
 // land later without re-touching the security path. See report (decision (b)).
 
 func (s *Server) logsHandler(ctx context.Context, _ *mcp.CallToolRequest, args logsArgs) (*mcp.CallToolResult, any, error) {
-	if args.Name == "" {
-		return nil, nil, fmt.Errorf("mcp: logs: name is required")
+	if err := requireName("logs", args.Name); err != nil {
+		return nil, nil, err
 	}
 
 	if _, err := s.gate(ctx, args.resourceArgs, policy.VerbLogs); err != nil {
@@ -331,8 +348,8 @@ func (s *Server) logsHandler(ctx context.Context, _ *mcp.CallToolRequest, args l
 }
 
 func (s *Server) execHandler(ctx context.Context, _ *mcp.CallToolRequest, args execArgs) (*mcp.CallToolResult, any, error) {
-	if args.Name == "" {
-		return nil, nil, fmt.Errorf("mcp: exec: name is required")
+	if err := requireName("exec", args.Name); err != nil {
+		return nil, nil, err
 	}
 
 	if len(args.Command) == 0 {
@@ -347,8 +364,8 @@ func (s *Server) execHandler(ctx context.Context, _ *mcp.CallToolRequest, args e
 }
 
 func (s *Server) scaleHandler(ctx context.Context, _ *mcp.CallToolRequest, args scaleArgs) (*mcp.CallToolResult, any, error) {
-	if args.Name == "" {
-		return nil, nil, fmt.Errorf("mcp: scale: name is required")
+	if err := requireName("scale", args.Name); err != nil {
+		return nil, nil, err
 	}
 
 	// Scale acts on the scale subresource and is gated as an update.

@@ -4,11 +4,14 @@ package mcp_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -41,8 +44,13 @@ type fakeClient struct {
 	allowDelete bool
 
 	// getReturnsNotFound makes Get behave as "object absent" for apply existence
-	// checks.
+	// checks (a genuine apierrors NotFound).
 	getReturnsNotFound bool
+
+	// getErr, when non-nil, is returned from Get (and takes precedence over
+	// getReturnsNotFound). Used to exercise non-NotFound existence-check
+	// failures, which must fail closed.
+	getErr error
 
 	mu      sync.Mutex
 	getN    int
@@ -73,8 +81,12 @@ func (f *fakeClient) Get(_ context.Context, res policy.Resource, ns, name string
 		f.t.Errorf("SECURITY INVARIANT VIOLATED: kube Get called on a path that must not reach the cluster")
 	}
 
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+
 	if f.getReturnsNotFound {
-		return nil, &notFoundError{}
+		return nil, apierrors.NewNotFound(schema.GroupResource{Resource: res.Plural}, name)
 	}
 
 	return &unstructured.Unstructured{Object: map[string]any{"kind": res.Kind, "metadata": map[string]any{"name": name}}}, nil
@@ -118,10 +130,6 @@ func (f *fakeClient) Delete(_ context.Context, res policy.Resource, ns, name str
 
 	return nil
 }
-
-type notFoundError struct{}
-
-func (notFoundError) Error() string { return "not found" }
 
 // fakeFactory hands out a single fakeClient regardless of context.
 type fakeFactory struct {
@@ -526,6 +534,59 @@ policies:
 	}
 }
 
+// A non-NotFound existence-check error must fail closed: apply does not fall
+// through to the create verb (which would be fail-open on verb selection), and
+// no Apply runs.
+func TestApply_NonNotFoundExistenceError_FailsClosed(t *testing.T) {
+	t.Parallel()
+
+	const cfg = `
+policies:
+  - contexts: ".*"
+    allow:
+      resources: ["*"]
+      verbs: [get, create]
+`
+	// A genuinely non-NotFound error (Forbidden). Must NOT be misread as absent.
+	forbidden := apierrors.NewForbidden(
+		schema.GroupResource{Resource: "configmaps"}, "cm1", errors.New("nope"))
+	if apierrors.IsNotFound(forbidden) {
+		t.Fatalf("test setup invalid: synthetic error must NOT be IsNotFound")
+	}
+
+	fc := &fakeClient{
+		t:        t,
+		res:      policy.Resource{Version: "v1", Kind: "ConfigMap", Plural: "configmaps"},
+		scope:    kube.ScopeNamespaced,
+		allowGet: true, // existence check permitted because create is permittable
+		// allowApply stays false: any Apply on this path fails the test.
+		getErr: forbidden,
+	}
+
+	cs := connect(t, mustEngine(t, cfg), &fakeFactory{client: fc})
+
+	out := call(t, cs, "k8s_apply", map[string]any{
+		"resource":  "configmaps",
+		"namespace": "default",
+		"manifest": map[string]any{
+			"apiVersion": "v1", "kind": "ConfigMap",
+			"metadata": map[string]any{"name": "cm1"},
+		},
+	})
+
+	if !out.IsError {
+		t.Fatalf("expected non-NotFound existence error to fail closed, got success")
+	}
+
+	if !strings.Contains(resultText(t, out), "existence check") {
+		t.Errorf("expected error mentioning %q, got %q", "existence check", resultText(t, out))
+	}
+
+	if fc.applyN != 0 {
+		t.Errorf("Apply must not run when existence check fails closed; applyN=%d", fc.applyN)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 4. Allowed path executes the right method with the resolved resource/ns
 // ---------------------------------------------------------------------------
@@ -647,4 +708,4 @@ policies:
 	}
 }
 
-var errFactoryShouldNotBeCalled = &notFoundError{}
+var errFactoryShouldNotBeCalled = errors.New("factory should not be called")
