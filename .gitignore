@@ -22,6 +22,9 @@ coverage.*
 # kept local, never committed to this public-facing project.
 /docs/superpowers/
 
+# Local Claude Code session state (scheduling locks, etc.) — never commit.
+/.claude/
+
 # Editor / OS cruft
 .DS_Store
 .idea/
