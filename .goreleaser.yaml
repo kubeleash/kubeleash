@@ -94,6 +94,15 @@ homebrew_casks:
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/kubeleash"]
           end
 
+# NOTE: the Claude Desktop .mcpb bundle is assembled by packaging/mcpb/build.sh,
+# NOT by GoReleaser. The release CI must, AFTER `goreleaser release` has produced
+# the per-platform binaries under dist/, run:
+#   bash packaging/mcpb/build.sh --out dist/kubeleash.mcpb
+# and upload dist/kubeleash.mcpb to the GitHub release (e.g. `gh release upload`).
+# It is intentionally not wired into a GoReleaser global `after` hook because
+# those run after publishing (too late for release.extra_files) and the schema
+# was rejected by `goreleaser check` in this toolchain.
+
 changelog:
   use: github
   sort: asc

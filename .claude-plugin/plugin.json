@@ -1,0 +1,38 @@
+{
+  "name": "kubeleash",
+  "version": "0.1.0",
+  "description": "Kubernetes MCP server with RBAC-style, context-scoped guardrails for AI agents.",
+  "author": {
+    "name": "Diogo Vilela",
+    "email": "diogofsvilela@gmail.com",
+    "url": "https://github.com/kubeleash/kubeleash"
+  },
+  "homepage": "https://github.com/kubeleash/kubeleash",
+  "repository": "https://github.com/kubeleash/kubeleash",
+  "license": "Apache-2.0",
+  "keywords": ["kubernetes", "k8s", "mcp", "rbac", "security", "guardrails", "policy"],
+  "mcpServers": {
+    "kubeleash": {
+      "command": "kubeleash",
+      "args": ["--policy", "${user_config.policy_path}"],
+      "env": {
+        "KUBECONFIG": "${user_config.kubeconfig_path}"
+      }
+    }
+  },
+  "userConfig": {
+    "policy_path": {
+      "type": "file",
+      "title": "Policy file",
+      "description": "Path to your kubeleash policy.yaml. Required — kubeleash is default-deny and refuses to start without an explicit policy.",
+      "required": true
+    },
+    "kubeconfig_path": {
+      "type": "file",
+      "title": "Kubeconfig file",
+      "description": "Path to the kubeconfig kubeleash should use. Defaults to ~/.kube/config.",
+      "required": false,
+      "default": "${HOME}/.kube/config"
+    }
+  }
+}

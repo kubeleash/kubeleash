@@ -75,18 +75,51 @@ speaks MCP over stdio, so it's launched by your client, not run as a daemon.
 | `--log-level <level>` | `debug` / `info` / `warn` / `error` (default `info`). The audit log is JSON on **stderr** (stdout is the MCP transport). |
 | `--version` | Print version, commit, and build date. |
 
-## Install (planned for v0.1)
+## Install
 
-<!-- These channels are wired and fire on the first tag. -->
+All channels run kubeleash **locally over stdio** — your client launches the
+binary; nothing is hosted.
 
-**One-click (planned):** a Claude Code plugin (`/plugin install kubeleash@…`), a
-Claude Desktop `.mcpb` extension (double-click), and "Add to Cursor / VS Code"
-buttons — all run kubeleash locally over stdio.
+### One-click
 
-**Manual:**
+**Claude Code plugin** — this repo is its own plugin marketplace. With the
+`kubeleash` binary on your PATH (see [Manual](#manual)):
+
+```shell
+/plugin marketplace add kubeleash/kubeleash
+/plugin install kubeleash@kubeleash
+```
+
+You'll be prompted for your policy file (and optionally a kubeconfig).
+
+**Cursor** — paste this into your browser address bar (Cursor can't prompt, so
+edit the placeholder path afterward in *Settings → MCP*):
+
+```
+cursor://anysphere.cursor-deeplink/mcp/install?name=kubeleash&config=eyJjb21tYW5kIjoia3ViZWxlYXNoIiwiYXJncyI6WyItLXBvbGljeSIsIi9hYnNvbHV0ZS9wYXRoL3RvL3BvbGljeS55YW1sIl19
+```
+
+(Decodes to `{"command":"kubeleash","args":["--policy","/absolute/path/to/policy.yaml"]}`
+— requires `kubeleash` on PATH.)
+
+**VS Code** — VS Code prompts you for the policy path:
+
+```
+vscode:mcp/install?%7B%22name%22%3A%22kubeleash%22%2C%22command%22%3A%22kubeleash%22%2C%22args%22%3A%5B%22--policy%22%2C%22%24%7Binput%3ApolicyPath%7D%22%5D%2C%22inputs%22%3A%5B%7B%22id%22%3A%22policyPath%22%2C%22type%22%3A%22promptString%22%2C%22description%22%3A%22Path%20to%20your%20kubeleash%20policy.yaml%22%7D%5D%7D
+```
+
+Or the web-redirect badge URL:
+`https://insiders.vscode.dev/redirect/mcp/install?name=kubeleash&config=%7B%22name%22%3A%22kubeleash%22%2C%22command%22%3A%22kubeleash%22%2C%22args%22%3A%5B%22--policy%22%2C%22%24%7Binput%3ApolicyPath%7D%22%5D%2C%22inputs%22%3A%5B%7B%22id%22%3A%22policyPath%22%2C%22type%22%3A%22promptString%22%2C%22description%22%3A%22Path%20to%20your%20kubeleash%20policy.yaml%22%7D%5D%7D`
+
+**Claude Desktop** *(on first release)* — download `kubeleash.mcpb` from the
+[releases page](https://github.com/kubeleash/kubeleash/releases) and
+double-click it. The bundle ships the binary, so no separate install is needed;
+Claude Desktop prompts you for the policy and kubeconfig.
+
+### Manual
 
 ```bash
-# Homebrew
+# Homebrew (on first release)
 brew install kubeleash/tap/kubeleash
 
 # Go
