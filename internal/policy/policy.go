@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -346,6 +347,70 @@ func (e *Engine) Evaluate(req Request) Decision {
 			req.Context,
 		),
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Capabilities — read-only policy introspection (no cluster I/O)
+// ---------------------------------------------------------------------------
+
+// Capabilities returns a human-readable summary of the actions the policy may
+// allow in the given context. It is a pure read over the compiled rules — it
+// performs no evaluation against a concrete resource and never touches a
+// cluster. It is intended to power the k8s_capabilities tool so an agent can
+// ask "what am I allowed to do here?" up front.
+//
+// Each returned line describes one allow clause whose context regex matches
+// ctx, listing its namespace narrowing (if any), resources and verbs, and
+// flags any deny clause in the same rule that subtracts verbs. Because the full
+// allow/deny interaction is resource- and scope-dependent, the summary is
+// advisory: the authoritative answer for a specific call is always Evaluate.
+func (e *Engine) Capabilities(ctx string) []string {
+	var out []string
+
+	for _, r := range e.rules {
+		if !r.contextsRe.MatchString(ctx) {
+			continue
+		}
+
+		scope := "all namespaces + cluster-scoped"
+		if len(r.namespaces) > 0 {
+			scope = "namespaces " + strings.Join(r.namespaces, ",")
+		}
+
+		if r.allow != nil {
+			line := fmt.Sprintf(
+				"allow: resources [%s] verbs [%s] (%s)",
+				strings.Join(r.allow.resources, ","),
+				joinVerbs(r.allow.verbs),
+				scope,
+			)
+			out = append(out, line)
+		}
+
+		if r.deny != nil {
+			line := fmt.Sprintf(
+				"deny: resources [%s] verbs [%s] (%s)",
+				strings.Join(r.deny.resources, ","),
+				joinVerbs(r.deny.verbs),
+				scope,
+			)
+			out = append(out, line)
+		}
+	}
+
+	return out
+}
+
+// joinVerbs renders a verb set as a stable, comma-separated string.
+func joinVerbs(set map[Verb]struct{}) string {
+	verbs := make([]string, 0, len(set))
+	for v := range set {
+		verbs = append(verbs, string(v))
+	}
+
+	sort.Strings(verbs)
+
+	return strings.Join(verbs, ",")
 }
 
 // ruleMatches reports whether r applies to req per the namespace-axis rules:
