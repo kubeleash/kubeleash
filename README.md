@@ -14,9 +14,10 @@ at a kubeconfig — even a cluster-admin one — and a local policy file constra
 what the agent can actually do, *per kube context*. Destructive actions are
 gated **before any call reaches the cluster**.
 
-> ⚠️ **Pre-alpha, no releases yet.** The design is settling and there is no
-> working binary on a tag yet. Watch/star to follow along. Install instructions
-> below describe the intended distribution once `v0.1` ships.
+> ⚠️ **Pre-release.** The v0.1 server is implemented and runs today **from
+> source** (see [Quickstart](#quickstart)), but there is no tagged release yet —
+> the Homebrew / `go install` / container channels below light up on the first
+> tag. Watch/star to follow along.
 
 ## Why
 
@@ -43,6 +44,36 @@ policies:
 ```
 
 Deny wins. Default deny. A broken policy refuses to start — it never fails open.
+
+See [`examples/policy.yaml`](examples/policy.yaml) for a fuller, commented policy
+(read-only prod, broader staging, namespace-scoped dev).
+
+## Quickstart
+
+No release yet, so run it from source (Go 1.26+):
+
+```bash
+git clone https://github.com/kubeleash/kubeleash && cd kubeleash
+go build -o kubeleash ./cmd/kubeleash
+
+# See how kubeleash validates and normalizes a policy (no cluster needed):
+./kubeleash --policy examples/policy.yaml --print-effective-policy
+
+# Try it without touching any cluster — every decision is logged, nothing runs:
+./kubeleash --policy examples/policy.yaml --dry-run
+```
+
+Then point an MCP client at it (see [below](#use-it-as-an-mcp-server)). kubeleash
+speaks MCP over stdio, so it's launched by your client, not run as a daemon.
+
+| Flag | Purpose |
+|------|---------|
+| `--policy <path>` | Policy file. **Required** (or set `K8S_MCP_POLICY`); with neither, kubeleash refuses to start — default-deny never fails open. |
+| `--kubeconfig <path>` | Explicit kubeconfig. Omit to use the standard client-go rules (`$KUBECONFIG`, `~/.kube/config`). |
+| `--dry-run` | Evaluate + log every decision, but never execute against a cluster. |
+| `--print-effective-policy` | Print the resolved/normalized rules and exit. |
+| `--log-level <level>` | `debug` / `info` / `warn` / `error` (default `info`). The audit log is JSON on **stderr** (stdout is the MCP transport). |
+| `--version` | Print version, commit, and build date. |
 
 ## Install (planned for v0.1)
 

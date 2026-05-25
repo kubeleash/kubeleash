@@ -1,0 +1,54 @@
+# Example kubeleash policy.
+#
+# Run `kubeleash --policy examples/policy.yaml --print-effective-policy` to see
+# how kubeleash normalizes this (e.g. an omitted `resources:` becomes ["*"]).
+#
+# Model: each rule is keyed on  context (regex) × resource × verb, with an
+# optional `namespaces` narrowing axis. Rules `allow` or `deny`, and across all
+# matching rules **deny wins**. Anything not explicitly allowed is **denied**
+# (default deny). kubeleash can only ever subtract from what the kubeconfig
+# already grants — effective access is `kubeconfig-grants ∩ policy-allows`.
+#
+# Verbs (the known set): get, list, create, update, delete, logs, exec, scale.
+# (`watch` and `patch` are accepted but reserved — no v0.1 tool emits them yet,
+# so writing the idiomatic `[get, list, watch]` is safe and forward-compatible.)
+#
+# `resources` is a plural name ("pods") or a group/version/kind
+# ("apps/v1/Deployment"); "*" matches any.
+
+policies:
+  # --- Production: read-only, and never exec, regardless of credentials. ------
+  # `contexts` is a regex matched against the active kube context name, so this
+  # covers prod-us-east-1, my-prod-cluster, etc.
+  - contexts: ".*prod.*"
+    allow:
+      resources: ["*"]
+      verbs: [get, list, watch]
+    deny:
+      # Deny wins, so even though `allow` above doesn't grant exec, this makes
+      # the refusal explicit (the agent gets a clear "denied by deny rule"
+      # reason instead of a vaguer "not granted").
+      verbs: [exec]
+
+  # --- Staging: broader, but block destructive verbs cluster-wide. ------------
+  - contexts: "^staging$"
+    allow:
+      resources: ["*"]
+      verbs: [get, list, watch, create, update, scale, logs]
+    deny:
+      verbs: [delete, exec]
+
+  # --- Dev: full access, but only inside two namespaces. ----------------------
+  # Because `namespaces` is set, this rule matches ONLY namespaced resources in
+  # these namespaces. Cluster-scoped resources (nodes, PVs, ClusterRoles, …)
+  # never match a rule that specifies `namespaces` — to govern those, write a
+  # rule with no `namespaces`.
+  - contexts: "^dev$"
+    namespaces: ["app", "app-system"]
+    allow:
+      resources: ["*"]
+      verbs: [get, list, watch, create, update, delete, scale, logs, exec]
+
+# Any context that matches no rule (or any verb/resource not allowed above) is
+# denied by default. There is intentionally no "allow everything" escape hatch —
+# you add the access you want, explicitly.
