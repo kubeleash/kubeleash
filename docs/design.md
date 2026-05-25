@@ -1,7 +1,8 @@
 # kubeleash — Design
 
-> Status: pre-alpha. This describes the intended design; implementation is in
-> progress and details may change.
+> Status: pre-release. This describes the design as implemented in the v0.1
+> server (which runs from source today); there is no tagged release yet and
+> details may still change.
 
 ## What it is
 
