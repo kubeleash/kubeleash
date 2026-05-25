@@ -20,6 +20,16 @@ the agent can actually do, **per kube context**, with destructive actions gated
 > the Homebrew / `go install` / container channels below light up on the first
 > tag. Watch/star to follow along.
 
+<div align="center">
+
+### Add kubeleash to your AI client
+
+[![Add to Cursor](https://img.shields.io/badge/Add%20to-Cursor-0098FF?style=for-the-badge&logo=cursor&logoColor=white)](cursor://anysphere.cursor-deeplink/mcp/install?name=kubeleash&config=eyJjb21tYW5kIjoia3ViZWxlYXNoIiwiYXJncyI6WyItLXBvbGljeSIsIi9hYnNvbHV0ZS9wYXRoL3RvL3BvbGljeS55YW1sIl19) &nbsp; [![Add to VS Code](https://img.shields.io/badge/Add%20to-VS%20Code-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=kubeleash&config=%7B%22name%22%3A%22kubeleash%22%2C%22command%22%3A%22kubeleash%22%2C%22args%22%3A%5B%22--policy%22%2C%22%24%7Binput%3ApolicyPath%7D%22%5D%2C%22inputs%22%3A%5B%7B%22id%22%3A%22policyPath%22%2C%22type%22%3A%22promptString%22%2C%22description%22%3A%22Path%20to%20your%20kubeleash%20policy.yaml%22%7D%5D%7D) &nbsp; [![Claude Code / Desktop](https://img.shields.io/badge/Add%20to-Claude-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](#install)
+
+<sub>Pre-release: the buttons launch the local <code>kubeleash</code> binary, so <a href="#quickstart">build it first</a>. See <a href="#install">Install</a> for Homebrew, Docker, and the Claude Desktop bundle.</sub>
+
+</div>
+
 ## Why
 
 Most Kubernetes MCP servers inherit the kubeconfig's permissions wholesale —
@@ -84,44 +94,39 @@ binary; nothing is hosted.
 
 ### One-click
 
-**Claude Code plugin** — this repo is its own plugin marketplace. With the
-`kubeleash` binary on your PATH (see [Manual](#manual)):
+The **Add to Cursor / VS Code** buttons
+[at the top](#add-kubeleash-to-your-ai-client) are the fastest path (they need
+the `kubeleash` binary on PATH — see [Manual](#manual)). Other clients:
+
+**Claude Code** — this repo is its own plugin marketplace:
 
 ```shell
 /plugin marketplace add kubeleash/kubeleash
 /plugin install kubeleash@kubeleash
 ```
 
-You'll be prompted for your policy file (and optionally a kubeconfig).
+**Claude Desktop** *(on first release)* — download `kubeleash.mcpb` from the
+[releases page](https://github.com/kubeleash/kubeleash/releases) and
+double-click it; the bundle ships the binary and prompts you for the policy and
+kubeconfig.
 
-**Cursor / VS Code** — one-click badge-buttons (each links to the editor's
-install deeplink):
+<details>
+<summary>Raw Cursor / VS Code deeplink URLs (if a button doesn't fire)</summary>
 
-[![Install in Cursor](https://img.shields.io/badge/Install%20in-Cursor-0098FF?logo=cursor&logoColor=white)](cursor://anysphere.cursor-deeplink/mcp/install?name=kubeleash&config=eyJjb21tYW5kIjoia3ViZWxlYXNoIiwiYXJncyI6WyItLXBvbGljeSIsIi9hYnNvbHV0ZS9wYXRoL3RvL3BvbGljeS55YW1sIl19)
-[![Install in VS Code](https://img.shields.io/badge/Install%20in-VS%20Code-007ACC?logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=kubeleash&config=%7B%22name%22%3A%22kubeleash%22%2C%22command%22%3A%22kubeleash%22%2C%22args%22%3A%5B%22--policy%22%2C%22%24%7Binput%3ApolicyPath%7D%22%5D%2C%22inputs%22%3A%5B%7B%22id%22%3A%22policyPath%22%2C%22type%22%3A%22promptString%22%2C%22description%22%3A%22Path%20to%20your%20kubeleash%20policy.yaml%22%7D%5D%7D)
-
-Cursor can't prompt, so after installing edit the placeholder path in
-*Settings → MCP*. VS Code prompts you for the policy path. If a badge doesn't
-fire, paste the matching URL below into your browser address bar instead.
+Cursor (can't prompt — edit the placeholder path afterward in *Settings → MCP*).
+Decodes to `{"command":"kubeleash","args":["--policy","/absolute/path/to/policy.yaml"]}`:
 
 ```
 cursor://anysphere.cursor-deeplink/mcp/install?name=kubeleash&config=eyJjb21tYW5kIjoia3ViZWxlYXNoIiwiYXJncyI6WyItLXBvbGljeSIsIi9hYnNvbHV0ZS9wYXRoL3RvL3BvbGljeS55YW1sIl19
 ```
 
-(Decodes to `{"command":"kubeleash","args":["--policy","/absolute/path/to/policy.yaml"]}`
-— requires `kubeleash` on PATH.)
+VS Code (prompts for the policy path):
 
 ```
 vscode:mcp/install?%7B%22name%22%3A%22kubeleash%22%2C%22command%22%3A%22kubeleash%22%2C%22args%22%3A%5B%22--policy%22%2C%22%24%7Binput%3ApolicyPath%7D%22%5D%2C%22inputs%22%3A%5B%7B%22id%22%3A%22policyPath%22%2C%22type%22%3A%22promptString%22%2C%22description%22%3A%22Path%20to%20your%20kubeleash%20policy.yaml%22%7D%5D%7D
 ```
 
-Or the web-redirect URL:
-`https://insiders.vscode.dev/redirect/mcp/install?name=kubeleash&config=%7B%22name%22%3A%22kubeleash%22%2C%22command%22%3A%22kubeleash%22%2C%22args%22%3A%5B%22--policy%22%2C%22%24%7Binput%3ApolicyPath%7D%22%5D%2C%22inputs%22%3A%5B%7B%22id%22%3A%22policyPath%22%2C%22type%22%3A%22promptString%22%2C%22description%22%3A%22Path%20to%20your%20kubeleash%20policy.yaml%22%7D%5D%7D`
-
-**Claude Desktop** *(on first release)* — download `kubeleash.mcpb` from the
-[releases page](https://github.com/kubeleash/kubeleash/releases) and
-double-click it. The bundle ships the binary, so no separate install is needed;
-Claude Desktop prompts you for the policy and kubeconfig.
+</details>
 
 ### Manual
 
