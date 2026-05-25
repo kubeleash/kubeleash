@@ -37,7 +37,6 @@ CI runs the same checks; PRs must be green.
 - We use [Conventional Commits](https://www.conventionalcommits.org/)
   (`feat:`, `fix:`, `docs:`, `chore:`, `ci:`, `refactor:`, `test:`). The PR
   **title** is linted against this and is used to generate the changelog.
-- **Sign your commits** (`git commit -S`). `main` requires signed commits.
 - Keep PRs focused. Add tests for behaviour changes.
 - `main` is protected: PR + passing CI + at least one review.
 
