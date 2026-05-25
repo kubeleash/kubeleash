@@ -54,6 +54,16 @@ func newClient(contextName string, cfg *rest.Config) (*client, error) {
 	}, nil
 }
 
+// newDynamicClient builds a dynamic client for cfg.
+func newDynamicClient(cfg *rest.Config) (dynamic.Interface, error) {
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("kube: build dynamic client: %w", err)
+	}
+
+	return dyn, nil
+}
+
 // Resolve implements [Client].
 func (c *client) Resolve(_ context.Context, resourceRef string) (policy.Resource, Scope, error) {
 	ref := strings.TrimSpace(resourceRef)

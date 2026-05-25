@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sync"
 
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -105,14 +104,4 @@ func (f *Factory) restConfig(contextName string) (*rest.Config, string, error) {
 	}
 
 	return restCfg, resolvedName, nil
-}
-
-// newDynamicClient builds a dynamic client for cfg.
-func newDynamicClient(cfg *rest.Config) (dynamic.Interface, error) {
-	dyn, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("kube: build dynamic client: %w", err)
-	}
-
-	return dyn, nil
 }

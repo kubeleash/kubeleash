@@ -4,6 +4,7 @@ package kube_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,33 +23,46 @@ import (
 	"github.com/kubeleash/kubeleash/internal/policy"
 )
 
-// defaultEnvtestAssets is the cached envtest binary path for this environment.
-// It is used only as a fallback when KUBEBUILDER_ASSETS is unset.
-const defaultEnvtestAssets = "/Users/be0x74a/.local/share/kubebuilder-envtest/k8s/1.31.0-darwin-arm64"
-
 const testContextName = "kubeleash-test"
 
-// testEnv bundles a running envtest control plane and the artefacts the tests
-// need to build a kube.Client against it.
-type testEnv struct {
-	env            *envtest.Environment
-	cfg            *rest.Config
-	kubeconfigPath string
+// Package-level envtest control plane, started once in TestMain and shared by
+// every test in the package. Per-test isolation comes from the unique object
+// names the tests already use; tests needing namespace isolation create their
+// own namespaces.
+var (
+	// sharedEnv is the running control plane, or nil when KUBEBUILDER_ASSETS is
+	// unset (in which case every test must skip).
+	sharedEnv *envtest.Environment
+	// sharedCfg is the rest.Config for sharedEnv.
+	sharedCfg *rest.Config
+	// sharedKubeconfig is the path to a kubeconfig pointing at sharedEnv.
+	sharedKubeconfig string
+	// envtestAvailable reports whether the control plane started; when false,
+	// requireEnvtest skips the calling test rather than nil-panicking.
+	envtestAvailable bool
+)
+
+// TestMain starts a single envtest control plane for the whole package. If
+// KUBEBUILDER_ASSETS is unset it does NOT start the env; individual tests then
+// skip via requireEnvtest. This cuts the suite from one control-plane boot per
+// test down to exactly one.
+func TestMain(m *testing.M) {
+	code, err := runWithEnvtest(m)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "kube envtest setup: %v\n", err)
+		os.Exit(1)
+	}
+
+	os.Exit(code)
 }
 
-// startEnvtest boots a real API server + etcd via envtest, installs two trivial
-// CRDs (one namespaced, one cluster-scoped) to prove scope discovery works for
-// CRDs, and writes a kubeconfig pointing at the control plane.
-func startEnvtest(t *testing.T) *testEnv {
-	t.Helper()
-
+// runWithEnvtest owns the control-plane lifecycle so env.Stop runs via defer
+// even though TestMain itself must call os.Exit.
+func runWithEnvtest(m *testing.M) (int, error) {
+	// envtest reads KUBEBUILDER_ASSETS itself; we only need to detect presence so
+	// the suite can skip cleanly off-CI without the assets installed.
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
-		if _, err := os.Stat(defaultEnvtestAssets); err != nil {
-			t.Fatalf("KUBEBUILDER_ASSETS unset and fallback assets not found at %q: %v",
-				defaultEnvtestAssets, err)
-		}
-
-		t.Setenv("KUBEBUILDER_ASSETS", defaultEnvtestAssets)
+		return m.Run(), nil
 	}
 
 	env := &envtest.Environment{
@@ -60,36 +74,53 @@ func startEnvtest(t *testing.T) *testEnv {
 
 	cfg, err := env.Start()
 	if err != nil {
-		t.Fatalf("envtest.Start failed (assets=%q): %v", os.Getenv("KUBEBUILDER_ASSETS"), err)
+		return 0, fmt.Errorf("envtest.Start (assets=%q): %w", os.Getenv("KUBEBUILDER_ASSETS"), err)
 	}
 
 	if cfg == nil {
-		t.Fatal("envtest.Start returned a nil rest.Config")
+		return 0, fmt.Errorf("envtest.Start returned a nil rest.Config")
 	}
 
-	t.Cleanup(func() {
+	defer func() {
 		if stopErr := env.Stop(); stopErr != nil {
-			t.Logf("envtest.Stop failed: %v", stopErr)
+			fmt.Fprintf(os.Stderr, "envtest.Stop: %v\n", stopErr)
 		}
-	})
+	}()
 
-	te := &testEnv{
-		env:            env,
-		cfg:            cfg,
-		kubeconfigPath: writeKubeconfig(t, cfg),
+	kubeconfigPath, err := writeSharedKubeconfig(cfg)
+	if err != nil {
+		return 0, err
 	}
 
 	// Wait for the CRDs to become Established so discovery sees them.
-	te.waitForCRDsEstablished(t)
+	if err := waitForCRDsEstablished(cfg); err != nil {
+		return 0, err
+	}
 
-	return te
+	sharedEnv = env
+	sharedCfg = cfg
+	sharedKubeconfig = kubeconfigPath
+	envtestAvailable = true
+
+	return m.Run(), nil
 }
 
-// writeKubeconfig writes a kubeconfig file pointing at cfg with a single named
-// context so the Factory can load it like a real on-disk kubeconfig.
-func writeKubeconfig(t *testing.T, cfg *rest.Config) string {
+// requireEnvtest skips the calling test when no control plane is running. Every
+// test that needs the cluster must call this first to avoid nil-panicking when
+// KUBEBUILDER_ASSETS is unset.
+func requireEnvtest(t *testing.T) {
 	t.Helper()
 
+	if !envtestAvailable {
+		t.Skip("KUBEBUILDER_ASSETS not set; run 'setup-envtest use' or set it " +
+			"(CI sets it explicitly); skipping envtest suite")
+	}
+}
+
+// writeSharedKubeconfig writes a kubeconfig file pointing at cfg with a single
+// named context so the Factory can load it like a real on-disk kubeconfig. It
+// is used once from TestMain; the file lives in os.TempDir for the package run.
+func writeSharedKubeconfig(cfg *rest.Config) (string, error) {
 	apiCfg := clientcmdapi.NewConfig()
 	apiCfg.Clusters[testContextName] = &clientcmdapi.Cluster{
 		Server:                   cfg.Host,
@@ -105,20 +136,25 @@ func writeKubeconfig(t *testing.T, cfg *rest.Config) string {
 	}
 	apiCfg.CurrentContext = testContextName
 
-	path := filepath.Join(t.TempDir(), "kubeconfig")
-	if err := clientcmd.WriteToFile(*apiCfg, path); err != nil {
-		t.Fatalf("write kubeconfig: %v", err)
+	dir, err := os.MkdirTemp("", "kubeleash-kube-test")
+	if err != nil {
+		return "", fmt.Errorf("mkdir temp for kubeconfig: %w", err)
 	}
 
-	return path
+	path := filepath.Join(dir, "kubeconfig")
+	if err := clientcmd.WriteToFile(*apiCfg, path); err != nil {
+		return "", fmt.Errorf("write kubeconfig: %w", err)
+	}
+
+	return path, nil
 }
 
-func (te *testEnv) waitForCRDsEstablished(t *testing.T) {
-	t.Helper()
-
-	cs, err := apiextclient.NewForConfig(te.cfg)
+// waitForCRDsEstablished blocks until both test CRDs report Established so
+// discovery sees them. It is called once from TestMain.
+func waitForCRDsEstablished(cfg *rest.Config) error {
+	cs, err := apiextclient.NewForConfig(cfg)
 	if err != nil {
-		t.Fatalf("apiextensions client: %v", err)
+		return fmt.Errorf("apiextensions client: %w", err)
 	}
 
 	names := []string{"widgets.example.com", "clusterwidgets.example.com"}
@@ -133,12 +169,14 @@ func (te *testEnv) waitForCRDsEstablished(t *testing.T) {
 			}
 
 			if time.Now().After(deadline) {
-				t.Fatalf("CRD %q not Established in time (lastErr=%v)", name, getErr)
+				return fmt.Errorf("CRD %q not Established in time (lastErr=%w)", name, getErr)
 			}
 
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
+
+	return nil
 }
 
 func crdEstablished(crd *apiextv1.CustomResourceDefinition) bool {
@@ -191,12 +229,12 @@ func trivialCRD(name, plural, kind string, scope apiextv1.ResourceScope) *apiext
 	}
 }
 
-// newClient builds a kube.Client for the test context from the written
+// newClient builds a kube.Client for the test context from the shared
 // kubeconfig, exercising the real Factory path.
-func newClient(t *testing.T, te *testEnv) kube.Client {
+func newClient(t *testing.T) kube.Client {
 	t.Helper()
 
-	f, err := kube.NewFactory(kube.Options{KubeconfigPath: te.kubeconfigPath})
+	f, err := kube.NewFactory(kube.Options{KubeconfigPath: sharedKubeconfig})
 	if err != nil {
 		t.Fatalf("NewFactory: %v", err)
 	}
@@ -214,8 +252,8 @@ func newClient(t *testing.T, te *testEnv) kube.Client {
 // ---------------------------------------------------------------------------
 
 func TestResolveAndScope(t *testing.T) {
-	te := startEnvtest(t)
-	c := newClient(t, te)
+	requireEnvtest(t)
+	c := newClient(t)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -305,8 +343,8 @@ func TestResolveAndScope(t *testing.T) {
 }
 
 func TestResolveErrors(t *testing.T) {
-	te := startEnvtest(t)
-	c := newClient(t, te)
+	requireEnvtest(t)
+	c := newClient(t)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -339,8 +377,8 @@ func TestResolveErrors(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCRUDBuiltin(t *testing.T) {
-	te := startEnvtest(t)
-	c := newClient(t, te)
+	requireEnvtest(t)
+	c := newClient(t)
 	ctx := context.Background()
 
 	res, scope, err := c.Resolve(ctx, "configmaps")
@@ -403,8 +441,8 @@ func TestCRUDBuiltin(t *testing.T) {
 }
 
 func TestCRUDCRD(t *testing.T) {
-	te := startEnvtest(t)
-	c := newClient(t, te)
+	requireEnvtest(t)
+	c := newClient(t)
 	ctx := context.Background()
 
 	res, scope, err := c.Resolve(ctx, "widgets")
@@ -451,8 +489,8 @@ func TestCRUDCRD(t *testing.T) {
 // TestClusterScopedCRUD exercises a cluster-scoped CRD with namespace "" to
 // prove the dynamic client routes cluster-scoped resources correctly.
 func TestClusterScopedCRUD(t *testing.T) {
-	te := startEnvtest(t)
-	c := newClient(t, te)
+	requireEnvtest(t)
+	c := newClient(t)
 	ctx := context.Background()
 
 	res, scope, err := c.Resolve(ctx, "clusterwidgets")
@@ -496,9 +534,9 @@ func TestClusterScopedCRUD(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFactoryDefaultsToCurrentContext(t *testing.T) {
-	te := startEnvtest(t)
+	requireEnvtest(t)
 
-	f, err := kube.NewFactory(kube.Options{KubeconfigPath: te.kubeconfigPath})
+	f, err := kube.NewFactory(kube.Options{KubeconfigPath: sharedKubeconfig})
 	if err != nil {
 		t.Fatalf("NewFactory: %v", err)
 	}
@@ -515,9 +553,9 @@ func TestFactoryDefaultsToCurrentContext(t *testing.T) {
 }
 
 func TestFactoryUnknownContext(t *testing.T) {
-	te := startEnvtest(t)
+	requireEnvtest(t)
 
-	f, err := kube.NewFactory(kube.Options{KubeconfigPath: te.kubeconfigPath})
+	f, err := kube.NewFactory(kube.Options{KubeconfigPath: sharedKubeconfig})
 	if err != nil {
 		t.Fatalf("NewFactory: %v", err)
 	}
