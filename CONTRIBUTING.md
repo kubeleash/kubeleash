@@ -1,7 +1,7 @@
 # Contributing to kubeleash
 
 Thanks for your interest in kubeleash — a Kubernetes MCP server that keeps AI
-agents on a leash. kubeleash is **pre-alpha**; the design is settling and the
+agents on a leash. kubeleash is **pre-release**; the design is settling and the
 API may change. Issues, discussion, and PRs are all welcome.
 
 ## Ground rules

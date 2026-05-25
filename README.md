@@ -6,23 +6,35 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/kubeleash/kubeleash)](https://goreportcard.com/report/github.com/kubeleash/kubeleash)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/kubeleash/kubeleash/badge)](https://scorecard.dev/viewer/?uri=github.com/kubeleash/kubeleash)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-![Status](https://img.shields.io/badge/status-pre--alpha-orange)
+![Status](https://img.shields.io/badge/status-pre--release-orange)
 
-**kubeleash is a Kubernetes [MCP](https://modelcontextprotocol.io) server with a
-twist: RBAC-style, context-scoped access control for AI agents.** You point it
-at a kubeconfig — even a cluster-admin one — and a local policy file constrains
-what the agent can actually do, *per kube context*. Destructive actions are
-gated **before any call reaches the cluster**.
+**Guardrails for AI agents on your cluster.** kubeleash is a local
+[MCP](https://modelcontextprotocol.io) server for Kubernetes whose
+differentiator is RBAC-style, *context-scoped* access control. Point it at a
+kubeconfig — even a cluster-admin one — and a local policy file constrains what
+the agent can actually do, **per kube context**, with destructive actions gated
+**before any call reaches the cluster**.
 
 > ⚠️ **Pre-release.** The v0.1 server is implemented and runs today **from
 > source** (see [Quickstart](#quickstart)), but there is no tagged release yet —
 > the Homebrew / `go install` / container channels below light up on the first
 > tag. Watch/star to follow along.
 
+<div align="center">
+
+### Add kubeleash to your AI client
+
+[![Add to Cursor](https://img.shields.io/badge/Add%20to-Cursor-0098FF?style=for-the-badge&logo=cursor&logoColor=white)](cursor://anysphere.cursor-deeplink/mcp/install?name=kubeleash&config=eyJjb21tYW5kIjoia3ViZWxlYXNoIiwiYXJncyI6WyItLXBvbGljeSIsIi9hYnNvbHV0ZS9wYXRoL3RvL3BvbGljeS55YW1sIl19) &nbsp; [![Add to VS Code](https://img.shields.io/badge/Add%20to-VS%20Code-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=kubeleash&config=%7B%22name%22%3A%22kubeleash%22%2C%22command%22%3A%22kubeleash%22%2C%22args%22%3A%5B%22--policy%22%2C%22%24%7Binput%3ApolicyPath%7D%22%5D%2C%22inputs%22%3A%5B%7B%22id%22%3A%22policyPath%22%2C%22type%22%3A%22promptString%22%2C%22description%22%3A%22Path%20to%20your%20kubeleash%20policy.yaml%22%7D%5D%7D) &nbsp; [![Claude Code / Desktop](https://img.shields.io/badge/Add%20to-Claude-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](#install)
+
+<sub>Pre-release: the buttons launch the local <code>kubeleash</code> binary, so <a href="#quickstart">build it first</a>. See <a href="#install">Install</a> for Homebrew, Docker, and the Claude Desktop bundle.</sub>
+
+</div>
+
 ## Why
 
-Existing Kubernetes MCP servers inherit the kubeconfig's permissions wholesale.
-kubeleash adds three things native RBAC can't express for this use case:
+Most Kubernetes MCP servers inherit the kubeconfig's permissions wholesale —
+whatever the credentials grant, the agent can do. kubeleash adds three things
+native RBAC can't express for this use case:
 
 - **Constrain the agent independently of the credentials.** Effective access is
   always `kubeconfig-grants ∩ policy-allows` — kubeleash only ever *subtracts*.
@@ -82,39 +94,39 @@ binary; nothing is hosted.
 
 ### One-click
 
-**Claude Code plugin** — this repo is its own plugin marketplace. With the
-`kubeleash` binary on your PATH (see [Manual](#manual)):
+The **Add to Cursor / VS Code** buttons
+[at the top](#add-kubeleash-to-your-ai-client) are the fastest path (they need
+the `kubeleash` binary on PATH — see [Manual](#manual)). Other clients:
+
+**Claude Code** — this repo is its own plugin marketplace:
 
 ```shell
 /plugin marketplace add kubeleash/kubeleash
 /plugin install kubeleash@kubeleash
 ```
 
-You'll be prompted for your policy file (and optionally a kubeconfig).
+**Claude Desktop** *(on first release)* — download `kubeleash.mcpb` from the
+[releases page](https://github.com/kubeleash/kubeleash/releases) and
+double-click it; the bundle ships the binary and prompts you for the policy and
+kubeconfig.
 
-**Cursor** — paste this into your browser address bar (Cursor can't prompt, so
-edit the placeholder path afterward in *Settings → MCP*):
+<details>
+<summary>Raw Cursor / VS Code deeplink URLs (if a button doesn't fire)</summary>
+
+Cursor (can't prompt — edit the placeholder path afterward in *Settings → MCP*).
+Decodes to `{"command":"kubeleash","args":["--policy","/absolute/path/to/policy.yaml"]}`:
 
 ```
 cursor://anysphere.cursor-deeplink/mcp/install?name=kubeleash&config=eyJjb21tYW5kIjoia3ViZWxlYXNoIiwiYXJncyI6WyItLXBvbGljeSIsIi9hYnNvbHV0ZS9wYXRoL3RvL3BvbGljeS55YW1sIl19
 ```
 
-(Decodes to `{"command":"kubeleash","args":["--policy","/absolute/path/to/policy.yaml"]}`
-— requires `kubeleash` on PATH.)
-
-**VS Code** — VS Code prompts you for the policy path:
+VS Code (prompts for the policy path):
 
 ```
 vscode:mcp/install?%7B%22name%22%3A%22kubeleash%22%2C%22command%22%3A%22kubeleash%22%2C%22args%22%3A%5B%22--policy%22%2C%22%24%7Binput%3ApolicyPath%7D%22%5D%2C%22inputs%22%3A%5B%7B%22id%22%3A%22policyPath%22%2C%22type%22%3A%22promptString%22%2C%22description%22%3A%22Path%20to%20your%20kubeleash%20policy.yaml%22%7D%5D%7D
 ```
 
-Or the web-redirect badge URL:
-`https://insiders.vscode.dev/redirect/mcp/install?name=kubeleash&config=%7B%22name%22%3A%22kubeleash%22%2C%22command%22%3A%22kubeleash%22%2C%22args%22%3A%5B%22--policy%22%2C%22%24%7Binput%3ApolicyPath%7D%22%5D%2C%22inputs%22%3A%5B%7B%22id%22%3A%22policyPath%22%2C%22type%22%3A%22promptString%22%2C%22description%22%3A%22Path%20to%20your%20kubeleash%20policy.yaml%22%7D%5D%7D`
-
-**Claude Desktop** *(on first release)* — download `kubeleash.mcpb` from the
-[releases page](https://github.com/kubeleash/kubeleash/releases) and
-double-click it. The bundle ships the binary, so no separate install is needed;
-Claude Desktop prompts you for the policy and kubeconfig.
+</details>
 
 ### Manual
 
@@ -136,7 +148,12 @@ docker run --rm -i -v ~/.kube:/root/.kube:ro -v ./policy.yaml:/policy.yaml:ro \
 
 ## Use it as an MCP server
 
-kubeleash speaks MCP over stdio. Point your client at the binary (or container):
+kubeleash exposes 8 generic, GVK-agnostic tools (`k8s_list`, `k8s_get`,
+`k8s_apply`, `k8s_delete`, `k8s_logs`, `k8s_exec`, `k8s_scale`, and
+`k8s_capabilities`) that work for any resource, including CRDs. Every call is
+checked against your policy and recorded to a JSON audit log on stderr (stdout
+is the MCP transport). It speaks MCP over stdio — point your client at the
+binary (or container):
 
 ```jsonc
 // Claude Desktop / Cursor / VS Code MCP config
@@ -153,9 +170,11 @@ kubeleash speaks MCP over stdio. Point your client at the binary (or container):
 
 ## Privacy
 
-**Zero telemetry. No phone-home.** kubeleash talks only to the Kubernetes API
-servers you point it at — by design, because you'll run it against real clusters
-with privileged credentials.
+**Zero telemetry. No phone-home. Local-only by design.** kubeleash talks only to
+the Kubernetes API servers you point it at — there is intentionally no remote or
+hosted connector to route your cluster credentials through. That's a feature, not
+a gap: you run it against real clusters with privileged credentials, so nothing
+should sit between the agent and your API server but the leash.
 
 ## Project
 
