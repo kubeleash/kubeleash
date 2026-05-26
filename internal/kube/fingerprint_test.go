@@ -9,6 +9,10 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
+// testFPKey is a fixed HMAC key so fingerprint comparisons within a test are
+// deterministic. Production uses a per-process random key.
+var testFPKey = []byte("test-fingerprint-key")
+
 // fingerprint must change when any connection-identity field changes, otherwise
 // the Factory would hand back a client pinned to stale credentials/endpoint.
 func TestFingerprintDistinguishesIdentityFields(t *testing.T) {
@@ -39,10 +43,10 @@ func TestFingerprintDistinguishesIdentityFields(t *testing.T) {
 		}
 	}
 
-	ref := fingerprint(base())
+	ref := fingerprint(testFPKey, base())
 
 	// Identical config -> identical fingerprint.
-	if got := fingerprint(base()); got != ref {
+	if got := fingerprint(testFPKey, base()); got != ref {
 		t.Fatalf("identical config produced different fingerprints: %s vs %s", ref, got)
 	}
 
@@ -64,7 +68,7 @@ func TestFingerprintDistinguishesIdentityFields(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := base()
 			mutate(cfg)
-			if got := fingerprint(cfg); got == ref {
+			if got := fingerprint(testFPKey, cfg); got == ref {
 				t.Errorf("changing %s did not change the fingerprint (stale-client risk)", name)
 			}
 		})
@@ -84,7 +88,7 @@ func TestFingerprintFramesExecArgsAndEnvSeparately(t *testing.T) {
 		Args:    []string{"X"},
 		Env:     []clientcmdapi.ExecEnvVar{{Name: "Y", Value: "Z"}},
 	}}
-	if fingerprint(withArgs) == fingerprint(withEnv) {
+	if fingerprint(testFPKey, withArgs) == fingerprint(testFPKey, withEnv) {
 		t.Fatal("Args and Env are not framed separately: distinct configs collide")
 	}
 }

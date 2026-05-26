@@ -3,6 +3,8 @@
 package kube
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -29,6 +31,13 @@ type Options struct {
 type Factory struct {
 	loader clientcmd.ClientConfigLoader
 
+	// fpKey keys the HMAC used to derive cache keys from connection identity.
+	// It is random per process: the fingerprint is a change-detecting lookup
+	// key, not stored credential material, so a keyed digest (rather than a bare
+	// hash of secrets like passwords/tokens) keeps the cache key from being a
+	// brute-force target while staying stable within a single in-memory cache.
+	fpKey []byte
+
 	mu      sync.Mutex
 	clients map[string]Client
 }
@@ -40,8 +49,14 @@ func NewFactory(opts Options) (*Factory, error) {
 		rules.ExplicitPath = opts.KubeconfigPath
 	}
 
+	fpKey := make([]byte, 32)
+	if _, err := rand.Read(fpKey); err != nil {
+		return nil, fmt.Errorf("kube: generate fingerprint key: %w", err)
+	}
+
 	return &Factory{
 		loader:  rules,
+		fpKey:   fpKey,
 		clients: make(map[string]Client),
 	}, nil
 }
@@ -57,12 +72,12 @@ func (f *Factory) Client(contextName string) (Client, error) {
 		return nil, err
 	}
 
-	key := resolvedName + "\x00" + fingerprint(cfg)
+	cacheKey := resolvedName + "\x00" + fingerprint(f.fpKey, cfg)
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if c, ok := f.clients[key]; ok {
+	if c, ok := f.clients[cacheKey]; ok {
 		return c, nil
 	}
 
@@ -72,18 +87,22 @@ func (f *Factory) Client(contextName string) (Client, error) {
 	}
 
 	// Stale entries are intentionally never evicted; a session sees only a handful of distinct configs.
-	f.clients[key] = c
+	f.clients[cacheKey] = c
 
 	return c, nil
 }
 
-// fingerprint hashes the connection-identifying fields of a rest.Config so that
-// any change to where or how we connect (endpoint, credentials, exec-plugin
-// arguments, impersonation) produces a distinct cache key. Every string is
-// length-prefixed and every list/optional block is count- or presence-prefixed,
-// so the encoding is injective: distinct configs cannot collide.
-func fingerprint(cfg *rest.Config) string {
-	h := sha256.New()
+// fingerprint derives a cache key from the connection-identifying fields of a
+// rest.Config so that any change to where or how we connect (endpoint,
+// credentials, exec-plugin arguments, impersonation) produces a distinct key.
+// Every string is length-prefixed and every list/optional block is count- or
+// presence-prefixed, so the encoding is injective: distinct configs cannot
+// collide. It uses HMAC keyed with a per-process random key rather than a bare
+// hash, because some inputs (password, bearer token, client key) are sensitive:
+// a keyed digest is not a brute-force target, and this is a lookup key, never
+// stored credential material.
+func fingerprint(key []byte, cfg *rest.Config) string {
+	h := hmac.New(sha256.New, key)
 
 	writeBytes := func(b []byte) {
 		var n [8]byte
