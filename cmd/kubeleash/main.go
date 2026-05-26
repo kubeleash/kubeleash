@@ -101,7 +101,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return printEffectivePolicy(stdout, engine)
 	}
 
-	factory, err := kube.NewFactory(kube.Options{KubeconfigPath: *kubeconfig})
+	kubeconfigPath, err := expandPath(*kubeconfig)
+	if err != nil {
+		return fmt.Errorf("expand kubeconfig path: %w", err)
+	}
+
+	factory, err := kube.NewFactory(kube.Options{KubeconfigPath: kubeconfigPath})
 	if err != nil {
 		return fmt.Errorf("build kube factory: %w", err)
 	}
@@ -157,21 +162,21 @@ func printEffectivePolicy(w io.Writer, engine *policy.Engine) error {
 }
 
 // resolvePolicyPath returns the policy path, preferring the flag value over the
-// env fallback. kubeleash is default-deny and MUST refuse to start without an
-// explicit policy, so an empty result is an error (never fail-open).
+// env fallback, with leading "~" expanded to the user's home directory.
+// kubeleash is default-deny and MUST refuse to start without an explicit
+// policy, so an empty result is an error (never fail-open).
 func resolvePolicyPath(flagVal, envVal string) (string, error) {
-	if flagVal != "" {
-		return flagVal, nil
+	switch {
+	case flagVal != "":
+		return expandPath(flagVal)
+	case envVal != "":
+		return expandPath(envVal)
+	default:
+		return "", fmt.Errorf(
+			"no policy specified: pass --policy <path> or set %s; kubeleash is default-deny and will not start without an explicit policy",
+			policyEnvVar,
+		)
 	}
-
-	if envVal != "" {
-		return envVal, nil
-	}
-
-	return "", fmt.Errorf(
-		"no policy specified: pass --policy <path> or set %s; kubeleash is default-deny and will not start without an explicit policy",
-		policyEnvVar,
-	)
 }
 
 // expandPath expands a leading "~" or "~/" to the user's home directory.

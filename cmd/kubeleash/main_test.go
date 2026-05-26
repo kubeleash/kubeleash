@@ -229,6 +229,32 @@ func TestExpandPath(t *testing.T) {
 	}
 }
 
+func TestResolvePolicyPathExpandsTilde(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	want := filepath.Join(home, "p.yaml")
+
+	t.Run("from flag", func(t *testing.T) {
+		got, err := resolvePolicyPath("~/p.yaml", "")
+		if err != nil {
+			t.Fatalf("resolvePolicyPath: %v", err)
+		}
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("from env", func(t *testing.T) {
+		got, err := resolvePolicyPath("", "~/p.yaml")
+		if err != nil {
+			t.Fatalf("resolvePolicyPath: %v", err)
+		}
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}
+
 func TestRunPolicyFromEnv(t *testing.T) {
 	path := writeTempPolicy(t, validPolicy)
 	t.Setenv(policyEnvVar, path)
