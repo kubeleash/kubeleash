@@ -4,8 +4,11 @@ package kube
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"sort"
+	"strconv"
 	"sync"
 
 	"k8s.io/client-go/rest"
@@ -68,37 +71,86 @@ func (f *Factory) Client(contextName string) (Client, error) {
 		return nil, err
 	}
 
+	// Stale entries are intentionally never evicted; a session sees only a handful of distinct configs.
 	f.clients[key] = c
 
 	return c, nil
 }
 
 // fingerprint hashes the connection-identifying fields of a rest.Config so that
-// any change to where/how we connect produces a distinct cache key.
+// any change to where or how we connect (endpoint, credentials, exec-plugin
+// arguments) produces a distinct cache key. Strings are NUL-separated and byte
+// blobs are length-prefixed, so the encoding is unambiguous.
 func fingerprint(cfg *rest.Config) string {
 	h := sha256.New()
-	tc := cfg.TLSClientConfig
 
-	fmt.Fprintf(h, "%s\x00%t\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00",
-		cfg.Host, tc.Insecure, tc.ServerName,
-		tc.CAFile, tc.CertFile, tc.KeyFile,
-		cfg.BearerToken, cfg.BearerTokenFile,
-	)
-	fmt.Fprintf(h, "%s\x00", cfg.Username)
-
-	for _, b := range [][]byte{tc.CAData, tc.CertData, tc.KeyData} {
-		h.Write(b)
+	writeStr := func(s string) {
+		h.Write([]byte(s))
 		h.Write([]byte{0})
 	}
-
-	if cfg.AuthProvider != nil {
-		fmt.Fprintf(h, "ap:%s\x00", cfg.AuthProvider.Name)
+	writeBytes := func(b []byte) {
+		var n [8]byte
+		binary.BigEndian.PutUint64(n[:], uint64(len(b)))
+		h.Write(n[:])
+		h.Write(b)
 	}
-	if cfg.ExecProvider != nil {
-		fmt.Fprintf(h, "ep:%s\x00", cfg.ExecProvider.Command)
+
+	tc := cfg.TLSClientConfig
+	writeStr(cfg.Host)
+	writeStr(strconv.FormatBool(tc.Insecure))
+	writeStr(tc.ServerName)
+	writeStr(tc.CAFile)
+	writeStr(tc.CertFile)
+	writeStr(tc.KeyFile)
+	writeBytes(tc.CAData)
+	writeBytes(tc.CertData)
+	writeBytes(tc.KeyData)
+
+	writeStr(cfg.Username)
+	writeStr(cfg.Password)
+	writeStr(cfg.BearerToken)
+	writeStr(cfg.BearerTokenFile)
+
+	writeStr(cfg.Impersonate.UserName)
+	writeStr(cfg.Impersonate.UID)
+	for _, g := range cfg.Impersonate.Groups {
+		writeStr(g)
+	}
+
+	if ap := cfg.AuthProvider; ap != nil {
+		writeStr("authprovider")
+		writeStr(ap.Name)
+		for _, k := range sortedKeys(ap.Config) {
+			writeStr(k)
+			writeStr(ap.Config[k])
+		}
+	}
+
+	if ep := cfg.ExecProvider; ep != nil {
+		writeStr("execprovider")
+		writeStr(ep.Command)
+		writeStr(ep.APIVersion)
+		for _, a := range ep.Args {
+			writeStr(a)
+		}
+		for _, e := range ep.Env {
+			writeStr(e.Name)
+			writeStr(e.Value)
+		}
 	}
 
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// sortedKeys returns the keys of m in deterministic order so a map's hash
+// contribution does not depend on Go's randomized map iteration.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // ResolveContext returns the concrete context name for contextName, defaulting
