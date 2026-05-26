@@ -3,6 +3,8 @@
 package kube
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sync"
 
@@ -42,19 +44,23 @@ func NewFactory(opts Options) (*Factory, error) {
 }
 
 // Client returns a [Client] scoped to the named context. An empty contextName
-// uses the kubeconfig's current-context. Built clients are cached per resolved
-// context key.
+// uses the kubeconfig's current-context. The kubeconfig is re-read on every call
+// and the cache is keyed on a fingerprint of the resolved connection identity, so
+// an out-of-band kubeconfig change (new port, rotated credentials) yields a fresh
+// client instead of a stale cached one.
 func (f *Factory) Client(contextName string) (Client, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	if c, ok := f.clients[contextName]; ok {
-		return c, nil
-	}
-
 	cfg, resolvedName, err := f.restConfig(contextName)
 	if err != nil {
 		return nil, err
+	}
+
+	key := resolvedName + "\x00" + fingerprint(cfg)
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if c, ok := f.clients[key]; ok {
+		return c, nil
 	}
 
 	c, err := newClient(resolvedName, cfg)
@@ -62,12 +68,37 @@ func (f *Factory) Client(contextName string) (Client, error) {
 		return nil, err
 	}
 
-	// Cache under both the requested key (possibly "") and the resolved name so
-	// repeat lookups by either form hit the cache.
-	f.clients[contextName] = c
-	f.clients[resolvedName] = c
+	f.clients[key] = c
 
 	return c, nil
+}
+
+// fingerprint hashes the connection-identifying fields of a rest.Config so that
+// any change to where/how we connect produces a distinct cache key.
+func fingerprint(cfg *rest.Config) string {
+	h := sha256.New()
+	tc := cfg.TLSClientConfig
+
+	fmt.Fprintf(h, "%s\x00%t\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00",
+		cfg.Host, tc.Insecure, tc.ServerName,
+		tc.CAFile, tc.CertFile, tc.KeyFile,
+		cfg.BearerToken, cfg.BearerTokenFile,
+	)
+	fmt.Fprintf(h, "%s\x00", cfg.Username)
+
+	for _, b := range [][]byte{tc.CAData, tc.CertData, tc.KeyData} {
+		h.Write(b)
+		h.Write([]byte{0})
+	}
+
+	if cfg.AuthProvider != nil {
+		fmt.Fprintf(h, "ap:%s\x00", cfg.AuthProvider.Name)
+	}
+	if cfg.ExecProvider != nil {
+		fmt.Fprintf(h, "ep:%s\x00", cfg.ExecProvider.Command)
+	}
+
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // ResolveContext returns the concrete context name for contextName, defaulting
