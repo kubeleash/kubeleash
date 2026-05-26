@@ -79,20 +79,23 @@ func (f *Factory) Client(contextName string) (Client, error) {
 
 // fingerprint hashes the connection-identifying fields of a rest.Config so that
 // any change to where or how we connect (endpoint, credentials, exec-plugin
-// arguments) produces a distinct cache key. Strings are NUL-separated and byte
-// blobs are length-prefixed, so the encoding is unambiguous.
+// arguments, impersonation) produces a distinct cache key. Every string is
+// length-prefixed and every list/optional block is count- or presence-prefixed,
+// so the encoding is injective: distinct configs cannot collide.
 func fingerprint(cfg *rest.Config) string {
 	h := sha256.New()
 
-	writeStr := func(s string) {
-		h.Write([]byte(s))
-		h.Write([]byte{0})
-	}
 	writeBytes := func(b []byte) {
 		var n [8]byte
 		binary.BigEndian.PutUint64(n[:], uint64(len(b)))
 		h.Write(n[:])
 		h.Write(b)
+	}
+	writeStr := func(s string) { writeBytes([]byte(s)) }
+	writeCount := func(n int) {
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], uint64(uint(n))) //nolint:gosec // n is always a non-negative length/count
+		h.Write(b[:])
 	}
 
 	tc := cfg.TLSClientConfig
@@ -113,30 +116,47 @@ func fingerprint(cfg *rest.Config) string {
 
 	writeStr(cfg.Impersonate.UserName)
 	writeStr(cfg.Impersonate.UID)
+	writeCount(len(cfg.Impersonate.Groups))
 	for _, g := range cfg.Impersonate.Groups {
 		writeStr(g)
 	}
+	extra := cfg.Impersonate.Extra
+	writeCount(len(extra))
+	for _, k := range sortedKeys(extra) {
+		writeStr(k)
+		writeCount(len(extra[k]))
+		for _, v := range extra[k] {
+			writeStr(v)
+		}
+	}
 
 	if ap := cfg.AuthProvider; ap != nil {
-		writeStr("authprovider")
+		writeCount(1)
 		writeStr(ap.Name)
+		writeCount(len(ap.Config))
 		for _, k := range sortedKeys(ap.Config) {
 			writeStr(k)
 			writeStr(ap.Config[k])
 		}
+	} else {
+		writeCount(0)
 	}
 
 	if ep := cfg.ExecProvider; ep != nil {
-		writeStr("execprovider")
+		writeCount(1)
 		writeStr(ep.Command)
 		writeStr(ep.APIVersion)
+		writeCount(len(ep.Args))
 		for _, a := range ep.Args {
 			writeStr(a)
 		}
+		writeCount(len(ep.Env))
 		for _, e := range ep.Env {
 			writeStr(e.Name)
 			writeStr(e.Value)
 		}
+	} else {
+		writeCount(0)
 	}
 
 	return hex.EncodeToString(h.Sum(nil))
@@ -144,7 +164,7 @@ func fingerprint(cfg *rest.Config) string {
 
 // sortedKeys returns the keys of m in deterministic order so a map's hash
 // contribution does not depend on Go's randomized map iteration.
-func sortedKeys(m map[string]string) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
