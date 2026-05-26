@@ -22,6 +22,14 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          # cosign v3 defaults to --new-bundle-format and ignores the
+          # --output-signature/--output-certificate flags our .goreleaser.yaml
+          # signs block uses, which then fails ("create bundle file: open : no
+          # such file or directory"). Pin to the latest v2, which keeps the
+          # legacy detached-sig/cert behavior. Revisit when migrating signing
+          # to the cosign bundle format.
+          cosign-release: 'v2.6.3'
       - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
       - name: Log in to ghcr.io
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
