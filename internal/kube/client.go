@@ -33,6 +33,9 @@ type client struct {
 	mapper      *restmapper.DeferredDiscoveryRESTMapper
 }
 
+// Context returns the resolved kube context name this client is scoped to.
+func (c *client) Context() string { return c.contextName }
+
 // newClient builds a concrete client for cfg. It does not perform cluster I/O.
 func newClient(contextName string, cfg *rest.Config) (*client, error) {
 	disco, err := discovery.NewDiscoveryClientForConfig(cfg)

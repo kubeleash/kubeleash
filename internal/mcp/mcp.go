@@ -34,6 +34,11 @@ const version = "0.1.0"
 // satisfies it; tests inject a fake.
 type ClientFactory interface {
 	Client(contextName string) (kube.Client, error)
+	// ResolveContext returns the concrete context name (current-context when
+	// given ""), without building a client or touching a cluster. Used by
+	// k8s_capabilities so it can report on the effective context while staying
+	// cluster-free.
+	ResolveContext(contextName string) (string, error)
 }
 
 // Server wires the policy engine and kube client factory into an MCP server.

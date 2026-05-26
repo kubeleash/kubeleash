@@ -153,11 +153,12 @@ func (s *Server) gate(ctx context.Context, args resourceArgs, verb policy.Verb) 
 
 	ns := namespaceFor(scope, args.Namespace)
 
-	decision := s.evaluate(args, res, scope, verb)
+	ctxName := c.Context()
+	decision := s.evaluate(ctxName, args, res, scope, verb)
 
 	// Audit AFTER the decision is known, before returning. dry_run reflects the
 	// mode for both outcomes.
-	s.recordDecision(args.Context, res, ns, verb, decision)
+	s.recordDecision(ctxName, res, ns, verb, decision)
 
 	if !decision.Allowed() {
 		return gateResult{}, fmt.Errorf("mcp: %s", decision.Reason)
@@ -202,9 +203,12 @@ func wouldDo(verb policy.Verb, res policy.Resource, ns, name string) *mcp.CallTo
 
 // evaluate builds the policy.Request and evaluates it. Factored out so the apply
 // dual-verb logic can reuse it without re-resolving.
-func (s *Server) evaluate(args resourceArgs, res policy.Resource, scope kube.Scope, verb policy.Verb) policy.Decision {
+// evaluate runs the policy decision. ctxName is the RESOLVED context name (from
+// the client), not the raw arg — an omitted context must be evaluated against
+// the kubeconfig current-context, never the empty string.
+func (s *Server) evaluate(ctxName string, args resourceArgs, res policy.Resource, scope kube.Scope, verb policy.Verb) policy.Decision {
 	return s.engine.Evaluate(policy.Request{
-		Context:       args.Context,
+		Context:       ctxName,
 		Resource:      res,
 		Namespace:     namespaceFor(scope, args.Namespace),
 		ClusterScoped: scope.ClusterScoped(),
@@ -251,7 +255,10 @@ func (s *Server) listHandler(ctx context.Context, _ *mcp.CallToolRequest, args l
 		return nil, nil, fmt.Errorf("mcp: list: %w", err)
 	}
 
-	return jsonResult(list.Object), nil, nil
+	// Marshal the list itself, not list.Object: UnstructuredList keeps its
+	// elements in the separate .Items field, so list.Object holds only the
+	// list's apiVersion/kind/metadata and would drop every item.
+	return jsonResult(list), nil, nil
 }
 
 func (s *Server) getHandler(ctx context.Context, _ *mcp.CallToolRequest, args resourceArgs) (*mcp.CallToolResult, any, error) {
@@ -305,9 +312,10 @@ func (s *Server) applyHandler(ctx context.Context, _ *mcp.CallToolRequest, args 
 	}
 
 	ns := namespaceFor(scope, args.Namespace)
+	ctxName := c.Context()
 
-	createDecision := s.evaluate(args.resourceArgs, res, scope, policy.VerbCreate)
-	updateDecision := s.evaluate(args.resourceArgs, res, scope, policy.VerbUpdate)
+	createDecision := s.evaluate(ctxName, args.resourceArgs, res, scope, policy.VerbCreate)
+	updateDecision := s.evaluate(ctxName, args.resourceArgs, res, scope, policy.VerbUpdate)
 
 	// Step 2: fully denied => zero cluster I/O (no existence Get).
 	if !createDecision.Allowed() && !updateDecision.Allowed() {
@@ -319,7 +327,7 @@ func (s *Server) applyHandler(ctx context.Context, _ *mcp.CallToolRequest, args 
 			govVerb, govDecision = policy.VerbCreate, createDecision
 		}
 
-		s.recordDecision(args.Context, res, ns, govVerb, govDecision)
+		s.recordDecision(ctxName, res, ns, govVerb, govDecision)
 
 		return nil, nil, fmt.Errorf("mcp: apply: %s", govDecision.Reason)
 	}
@@ -341,7 +349,7 @@ func (s *Server) applyHandler(ctx context.Context, _ *mcp.CallToolRequest, args 
 			govVerb, govDecision = policy.VerbCreate, createDecision
 		}
 
-		s.recordDecision(args.Context, res, ns, govVerb, govDecision)
+		s.recordDecision(ctxName, res, ns, govVerb, govDecision)
 
 		return textResult(fmt.Sprintf(
 			"dry-run: would apply (create-or-update) %s %s in namespace %q (policy permitted; no cluster I/O performed)",
@@ -375,7 +383,7 @@ func (s *Server) applyHandler(ctx context.Context, _ *mcp.CallToolRequest, args 
 
 	// Audit the concrete verb's decision — the one that actually governs the
 	// outcome now that existence selected create vs update.
-	s.recordDecision(args.Context, res, ns, concrete, concreteDecision)
+	s.recordDecision(ctxName, res, ns, concrete, concreteDecision)
 
 	if !concreteDecision.Allowed() {
 		return nil, nil, fmt.Errorf("mcp: apply (%s): %s", concrete, concreteDecision.Reason)
@@ -459,16 +467,26 @@ func (s *Server) scaleHandler(ctx context.Context, _ *mcp.CallToolRequest, args 
 }
 
 // capabilitiesHandler answers "what am I allowed to do in context X?" purely
-// from the policy engine. It performs ZERO cluster calls and never touches the
-// kube factory.
+// from the policy engine. It performs ZERO cluster calls; an omitted context is
+// resolved to the kubeconfig current-context via the factory (kubeconfig read
+// only, no cluster I/O) so the report matches what a tool call would evaluate.
 func (s *Server) capabilitiesHandler(_ context.Context, _ *mcp.CallToolRequest, args capabilitiesArgs) (*mcp.CallToolResult, any, error) {
-	caps := s.engine.Capabilities(args.Context)
+	ctxName := args.Context
+	if ctxName == "" {
+		resolved, err := s.factory.ResolveContext("")
+		if err != nil {
+			return nil, nil, fmt.Errorf("mcp: capabilities: %w", err)
+		}
+		ctxName = resolved
+	}
+
+	caps := s.engine.Capabilities(ctxName)
 
 	lines := make([]string, 0, len(caps)+1)
 	if len(caps) == 0 {
-		lines = append(lines, fmt.Sprintf("context %q: no actions are allowed by policy", args.Context))
+		lines = append(lines, fmt.Sprintf("context %q: no actions are allowed by policy", ctxName))
 	} else {
-		lines = append(lines, fmt.Sprintf("context %q allows:", args.Context))
+		lines = append(lines, fmt.Sprintf("context %q allows:", ctxName))
 		lines = append(lines, caps...)
 	}
 

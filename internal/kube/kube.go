@@ -72,6 +72,12 @@ func (s Scope) String() string {
 // I/O until a method that needs the cluster is called, so a denied request
 // (gated above this layer) never reaches the cluster.
 type Client interface {
+	// Context returns the resolved kube context name this client is scoped to
+	// (the kubeconfig current-context when the caller asked for ""). Callers
+	// must use this for the policy decision so an omitted context evaluates
+	// against the real context name, not the empty string.
+	Context() string
+
 	// Resolve turns a user resource reference into a fully-populated
 	// policy.Resource plus its Scope, using this context's RESTMapper and
 	// discovery. The reference is either a plural ("pods") or a
