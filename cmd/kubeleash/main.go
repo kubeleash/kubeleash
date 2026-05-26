@@ -195,7 +195,7 @@ func expandPath(p string) (string, error) {
 		return home, nil
 	}
 
-	return filepath.Join(home, p[2:]), nil
+	return filepath.Join(home, p[2:]), nil // p[2:] trims the leading "~/"
 }
 
 // parseLevel maps a level name to a slog.Level. Unknown values are an error so

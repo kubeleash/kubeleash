@@ -209,6 +209,7 @@ func TestExpandPath(t *testing.T) {
 	}{
 		{"empty", "", ""},
 		{"tilde slash", "~/.kube/config", filepath.Join(home, ".kube/config")},
+		{"tilde slash empty", "~/", home},
 		{"bare tilde", "~", home},
 		{"absolute", "/abs/path", "/abs/path"},
 		{"relative", "rel/x", "rel/x"},
