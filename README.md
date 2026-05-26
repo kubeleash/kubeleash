@@ -105,6 +105,10 @@ the `kubeleash` binary on PATH — see [Manual](#manual)). Other clients:
 /plugin install kubeleash@kubeleash
 ```
 
+The plugin also ships two skills — `using-kubeleash` (how an agent should query
+and act through the gated tools) and `authoring-kubeleash-policy` (how to write
+the policy) — so the agent understands the guardrails, not just the tool list.
+
 **Claude Desktop** *(on first release)* — download `kubeleash.mcpb` from the
 [releases page](https://github.com/kubeleash/kubeleash/releases) and
 double-click it; the bundle ships the binary and prompts you for the policy and
