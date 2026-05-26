@@ -1,6 +1,8 @@
-# 🐶🦮 kubeleash
-
-> **Point it at your over-privileged kubeconfig — it still can't nuke prod.**
+<div align="center">
+  <img src="assets/avatar.png" alt="kubeleash logo" width="132" height="132" />
+  <h1>kubeleash</h1>
+  <p><strong>Point it at your over-privileged kubeconfig — it still can't nuke prod.</strong></p>
+</div>
 
 [![CI](https://github.com/kubeleash/kubeleash/actions/workflows/ci.yml/badge.svg)](https://github.com/kubeleash/kubeleash/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/kubeleash/kubeleash)](https://goreportcard.com/report/github.com/kubeleash/kubeleash)
@@ -15,7 +17,7 @@ kubeconfig — even a cluster-admin one — and a local policy file constrains w
 the agent can actually do, **per kube context**, with destructive actions gated
 **before any call reaches the cluster**.
 
-> ⚠️ **Pre-release.** The v0.1 server is implemented and runs today **from
+> **Pre-release.** The v0.1 server is implemented and runs today **from
 > source** (see [Quickstart](#quickstart)), but there is no tagged release yet —
 > the Homebrew / `go install` / container channels below light up on the first
 > tag. Watch/star to follow along.
