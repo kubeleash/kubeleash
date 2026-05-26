@@ -1,5 +1,6 @@
 {
   "name": "kubeleash",
+  "description": "kubeleash — a Kubernetes MCP server with RBAC-style, context-scoped guardrails for AI agents, plus skills that teach agents how to query and act on clusters safely.",
   "owner": {
     "name": "Diogo Vilela",
     "email": "diogofsvilela@gmail.com"
@@ -7,7 +8,7 @@
   "plugins": [
     {
       "name": "kubeleash",
-      "source": ".",
+      "source": "./",
       "description": "Kubernetes MCP server with RBAC-style, context-scoped guardrails for AI agents. Requires the `kubeleash` binary on PATH (brew install kubeleash/tap/kubeleash, or go install).",
       "version": "0.1.0",
       "author": {
