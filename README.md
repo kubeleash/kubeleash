@@ -8,7 +8,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/kubeleash/kubeleash)](https://goreportcard.com/report/github.com/kubeleash/kubeleash)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/kubeleash/kubeleash/badge)](https://scorecard.dev/viewer/?uri=github.com/kubeleash/kubeleash)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-![Status](https://img.shields.io/badge/status-pre--release-orange)
+[![Release](https://img.shields.io/github/v/release/kubeleash/kubeleash?sort=semver)](https://github.com/kubeleash/kubeleash/releases/latest)
 
 **Guardrails for AI agents on your cluster.** kubeleash is a local
 [MCP](https://modelcontextprotocol.io) server for Kubernetes whose
@@ -17,18 +17,13 @@ kubeconfig — even a cluster-admin one — and a local policy file constrains w
 the agent can actually do, **per kube context**, with destructive actions gated
 **before any call reaches the cluster**.
 
-> **Pre-release.** The v0.1 server is implemented and runs today **from
-> source** (see [Quickstart](#quickstart)), but there is no tagged release yet —
-> the Homebrew / `go install` / container channels below light up on the first
-> tag. Watch/star to follow along.
-
 <div align="center">
 
 ### Add kubeleash to your AI client
 
 [![Add to VS Code](https://img.shields.io/badge/Add%20to-VS%20Code-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=kubeleash&config=%7B%22name%22%3A%22kubeleash%22%2C%22command%22%3A%22kubeleash%22%2C%22args%22%3A%5B%22--policy%22%2C%22%24%7Binput%3ApolicyPath%7D%22%5D%2C%22inputs%22%3A%5B%7B%22id%22%3A%22policyPath%22%2C%22type%22%3A%22promptString%22%2C%22description%22%3A%22Path%20to%20your%20kubeleash%20policy.yaml%22%7D%5D%7D) &nbsp; [![Add to Cursor](https://img.shields.io/badge/Add%20to-Cursor-0098FF?style=for-the-badge&logo=cursor&logoColor=white)](#install) &nbsp; [![Claude Code / Desktop](https://img.shields.io/badge/Add%20to-Claude-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](#install)
 
-<sub>Pre-release: install launches the local <code>kubeleash</code> binary, so <a href="#quickstart">build it first</a>. VS Code installs in one click; Cursor &amp; Claude open the <a href="#install">setup steps</a> (GitHub strips the <code>cursor://</code> one-click link, so it lives there as copy-paste).</sub>
+<sub>Install launches the local <code>kubeleash</code> binary &mdash; get it via <code>brew</code>, <code>go install</code>, or the container (see <a href="#install">Install</a>). VS Code installs in one click; Cursor &amp; Claude open the <a href="#install">setup steps</a> (GitHub strips the <code>cursor://</code> one-click link, so it lives there as copy-paste).</sub>
 
 </div>
 
@@ -64,18 +59,24 @@ See [`examples/policy.yaml`](examples/policy.yaml) for a fuller, commented polic
 
 ## Quickstart
 
-No release yet, so run it from source (Go 1.26+):
+Install it (Homebrew shown — see [Install](#install) for `go install` and the
+container), then exercise a policy without touching any cluster:
 
 ```bash
-git clone https://github.com/kubeleash/kubeleash && cd kubeleash
-go build -o kubeleash ./cmd/kubeleash
+brew install kubeleash/tap/kubeleash
+
+# Grab the commented example policy:
+curl -fsSL https://raw.githubusercontent.com/kubeleash/kubeleash/main/examples/policy.yaml -o policy.yaml
 
 # See how kubeleash validates and normalizes a policy (no cluster needed):
-./kubeleash --policy examples/policy.yaml --print-effective-policy
+kubeleash --policy policy.yaml --print-effective-policy
 
 # Try it without touching any cluster — every decision is logged, nothing runs:
-./kubeleash --policy examples/policy.yaml --dry-run
+kubeleash --policy policy.yaml --dry-run
 ```
+
+Prefer source? `git clone https://github.com/kubeleash/kubeleash && cd kubeleash
+&& go build -o kubeleash ./cmd/kubeleash` (Go 1.26+).
 
 Then point an MCP client at it (see [below](#use-it-as-an-mcp-server)). kubeleash
 speaks MCP over stdio, so it's launched by your client, not run as a daemon.
@@ -92,7 +93,9 @@ speaks MCP over stdio, so it's launched by your client, not run as a daemon.
 ## Install
 
 All channels run kubeleash **locally over stdio** — your client launches the
-binary; nothing is hosted.
+binary; nothing is hosted. kubeleash is listed in the
+[official MCP Registry](https://registry.modelcontextprotocol.io) as
+`io.github.kubeleash/kubeleash`, so registry-aware clients can discover it too.
 
 ### One-click
 
@@ -111,7 +114,7 @@ The plugin also ships two skills — `using-kubeleash` (how an agent should quer
 and act through the gated tools) and `authoring-kubeleash-policy` (how to write
 the policy) — so the agent understands the guardrails, not just the tool list.
 
-**Claude Desktop** *(on first release)* — download `kubeleash.mcpb` from the
+**Claude Desktop** — download `kubeleash.mcpb` from the
 [releases page](https://github.com/kubeleash/kubeleash/releases) and
 double-click it; the bundle ships the binary and prompts you for the policy and
 kubeconfig.
@@ -137,7 +140,7 @@ vscode:mcp/install?%7B%22name%22%3A%22kubeleash%22%2C%22command%22%3A%22kubeleas
 ### Manual
 
 ```bash
-# Homebrew (on first release)
+# Homebrew
 brew install kubeleash/tap/kubeleash
 
 # Go

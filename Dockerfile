@@ -4,4 +4,8 @@ FROM gcr.io/distroless/static:nonroot
 ARG TARGETOS
 ARG TARGETARCH
 COPY ${TARGETOS}/${TARGETARCH}/kubeleash /usr/bin/kubeleash
+# Proves to the MCP Registry that this image belongs to the io.github.kubeleash
+# namespace — the registry rejects an OCI package whose annotation/label does
+# not match the `name` in server.json. Must stay in lockstep with server.json.
+LABEL io.modelcontextprotocol.server.name="io.github.kubeleash/kubeleash"
 ENTRYPOINT ["/usr/bin/kubeleash"]
