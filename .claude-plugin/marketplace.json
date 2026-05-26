@@ -9,7 +9,7 @@
     {
       "name": "kubeleash",
       "source": "./",
-      "description": "Kubernetes MCP server with RBAC-style, context-scoped guardrails for AI agents. Requires the `kubeleash` binary on PATH (brew install kubeleash/tap/kubeleash, or go install).",
+      "description": "Kubernetes MCP server with RBAC-style, context-scoped guardrails for AI agents. Installs the kubeleash binary on first run (or uses one already on PATH).",
       "version": "0.1.0",
       "author": {
         "name": "Diogo Vilela",

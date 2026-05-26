@@ -110,6 +110,10 @@ the `kubeleash` binary on PATH — see [Manual](#manual)). Other clients:
 /plugin install kubeleash@kubeleash
 ```
 
+No separate install step: on first run the plugin uses a `kubeleash` already on
+your PATH, or otherwise downloads the matching release binary (verifying its
+checksum) and caches it.
+
 The plugin also ships two skills — `using-kubeleash` (how an agent should query
 and act through the gated tools) and `authoring-kubeleash-policy` (how to write
 the policy) — so the agent understands the guardrails, not just the tool list.
