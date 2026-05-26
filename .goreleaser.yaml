@@ -64,6 +64,9 @@ dockers_v2:
       "org.opencontainers.image.source": "https://github.com/kubeleash/kubeleash"
       "org.opencontainers.image.version": "{{ .Version }}"
       "org.opencontainers.image.licenses": "Apache-2.0"
+      # MCP Registry OCI ownership proof (mirrors the Dockerfile LABEL); applied
+      # at the manifest level so the registry's annotation check passes.
+      "io.modelcontextprotocol.server.name": "io.github.kubeleash/kubeleash"
 
 docker_signs:
   - cmd: cosign
