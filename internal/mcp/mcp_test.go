@@ -30,8 +30,16 @@ import (
 type fakeClient struct {
 	t *testing.T
 
+	// context is the resolved context name this client reports via Context().
+	// The gate must use it (not the raw tool arg) for the policy decision.
+	context string
+
 	res   policy.Resource
 	scope kube.Scope
+
+	// listItems, when set, are returned as the .Items of the List result so the
+	// rendering of a non-empty list can be asserted.
+	listItems []any
 
 	resolveErr error
 
@@ -62,6 +70,8 @@ type fakeClient struct {
 	gotNamespace string
 	gotName      string
 }
+
+func (f *fakeClient) Context() string { return f.context }
 
 func (f *fakeClient) Resolve(_ context.Context, _ string) (policy.Resource, kube.Scope, error) {
 	if f.resolveErr != nil {
@@ -102,7 +112,14 @@ func (f *fakeClient) List(_ context.Context, res policy.Resource, ns string) (*u
 		f.t.Errorf("SECURITY INVARIANT VIOLATED: kube List called on a denied path")
 	}
 
-	return &unstructured.UnstructuredList{Object: map[string]any{"kind": res.Kind + "List"}}, nil
+	list := &unstructured.UnstructuredList{Object: map[string]any{"kind": res.Kind + "List", "apiVersion": "v1"}}
+	for _, it := range f.listItems {
+		if m, ok := it.(map[string]any); ok {
+			list.Items = append(list.Items, unstructured.Unstructured{Object: m})
+		}
+	}
+
+	return list, nil
 }
 
 func (f *fakeClient) Apply(_ context.Context, res policy.Resource, ns string, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
@@ -143,6 +160,22 @@ func (f *fakeFactory) Client(_ string) (kube.Client, error) {
 	}
 
 	return f.client, nil
+}
+
+func (f *fakeFactory) ResolveContext(name string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+
+	if name != "" {
+		return name, nil
+	}
+
+	if f.client != nil {
+		return f.client.context, nil
+	}
+
+	return "", nil
 }
 
 // ---------------------------------------------------------------------------
@@ -705,6 +738,68 @@ policies:
 
 	if !strings.Contains(text, "deny") || !strings.Contains(text, "exec") {
 		t.Errorf("capabilities missing deny rule: %q", text)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 6. Regressions found by end-to-end testing against a live API server
+// ---------------------------------------------------------------------------
+
+// When the `context` arg is omitted, the gate must evaluate policy against the
+// client's RESOLVED context, not the empty string. Policy here grants only
+// "prod"; an omitted context (client resolves to "prod") must be ALLOWED.
+func TestGateUsesResolvedContextWhenArgOmitted(t *testing.T) {
+	t.Parallel()
+
+	const prodOnly = `
+policies:
+  - contexts: "^prod$"
+    allow:
+      resources: ["*"]
+      verbs: [get]
+`
+	res := policy.Resource{Version: "v1", Kind: "ConfigMap", Plural: "configmaps"}
+	fc := &fakeClient{t: t, context: "prod", res: res, scope: kube.ScopeNamespaced, allowGet: true}
+
+	cs := connect(t, mustEngine(t, prodOnly), &fakeFactory{client: fc})
+
+	// No "context" arg — defaults to the client's resolved context ("prod").
+	out := call(t, cs, "k8s_get", map[string]any{"resource": "configmaps", "name": "app", "namespace": "demo"})
+	if out.IsError {
+		t.Fatalf("expected allow (context resolves to prod), got error: %s", resultText(t, out))
+	}
+
+	if fc.getN != 1 {
+		t.Fatalf("expected Get to run once, got %d", fc.getN)
+	}
+}
+
+// k8s_list must render the list's items. UnstructuredList keeps items in .Items
+// (not .Object), so a regression that marshals .Object drops them.
+func TestListRendersItems(t *testing.T) {
+	t.Parallel()
+
+	res := policy.Resource{Version: "v1", Kind: "ConfigMap", Plural: "configmaps"}
+	fc := &fakeClient{
+		t: t, res: res, scope: kube.ScopeNamespaced, allowList: true,
+		listItems: []any{
+			map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "app-config"}},
+			map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "feature-flags"}},
+		},
+	}
+
+	cs := connect(t, mustEngine(t, allowReadProd), &fakeFactory{client: fc})
+
+	out := call(t, cs, "k8s_list", map[string]any{"resource": "configmaps", "namespace": "demo"})
+	if out.IsError {
+		t.Fatalf("k8s_list error: %s", resultText(t, out))
+	}
+
+	txt := resultText(t, out)
+	for _, want := range []string{`"items"`, "app-config", "feature-flags"} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("list output missing %q; got:\n%s", want, txt)
+		}
 	}
 }
 

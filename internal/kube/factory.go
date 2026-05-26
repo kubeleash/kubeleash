@@ -70,6 +70,35 @@ func (f *Factory) Client(contextName string) (Client, error) {
 	return c, nil
 }
 
+// ResolveContext returns the concrete context name for contextName, defaulting
+// to the kubeconfig current-context when contextName is "". It reads the
+// kubeconfig but builds no client and contacts no cluster, so callers that only
+// need the name (e.g. policy introspection) stay cluster-free.
+func (f *Factory) ResolveContext(contextName string) (string, error) {
+	overrides := &clientcmd.ConfigOverrides{}
+	if contextName != "" {
+		overrides.CurrentContext = contextName
+	}
+
+	rawCfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(f.loader, overrides).RawConfig()
+	if err != nil {
+		return "", fmt.Errorf("kube: load kubeconfig: %w", err)
+	}
+
+	resolved := contextName
+	if resolved == "" {
+		resolved = rawCfg.CurrentContext
+	}
+	if resolved == "" {
+		return "", fmt.Errorf("kube: no context specified and kubeconfig has no current-context")
+	}
+	if _, ok := rawCfg.Contexts[resolved]; !ok {
+		return "", fmt.Errorf("kube: context %q not found in kubeconfig", resolved)
+	}
+
+	return resolved, nil
+}
+
 // restConfig resolves contextName against the loaded kubeconfig and returns a
 // *rest.Config plus the concrete context name that was used.
 func (f *Factory) restConfig(contextName string) (*rest.Config, string, error) {
