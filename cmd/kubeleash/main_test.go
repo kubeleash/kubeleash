@@ -200,6 +200,34 @@ func TestRunInvalidLogLevelIsError(t *testing.T) {
 	}
 }
 
+func TestExpandPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cases := []struct {
+		name, in, want string
+	}{
+		{"empty", "", ""},
+		{"tilde slash", "~/.kube/config", filepath.Join(home, ".kube/config")},
+		{"bare tilde", "~", home},
+		{"absolute", "/abs/path", "/abs/path"},
+		{"relative", "rel/x", "rel/x"},
+		{"dollar home literal", "$HOME/.kube/config", "$HOME/.kube/config"},
+		{"tilde user unsupported", "~bob/x", "~bob/x"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := expandPath(c.in)
+			if err != nil {
+				t.Fatalf("expandPath(%q): %v", c.in, err)
+			}
+			if got != c.want {
+				t.Errorf("expandPath(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
 func TestRunPolicyFromEnv(t *testing.T) {
 	path := writeTempPolicy(t, validPolicy)
 	t.Setenv(policyEnvVar, path)

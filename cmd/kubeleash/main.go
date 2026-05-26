@@ -19,6 +19,8 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -170,6 +172,30 @@ func resolvePolicyPath(flagVal, envVal string) (string, error) {
 		"no policy specified: pass --policy <path> or set %s; kubeleash is default-deny and will not start without an explicit policy",
 		policyEnvVar,
 	)
+}
+
+// expandPath expands a leading "~" or "~/" to the user's home directory.
+// Absolute paths, relative paths, "$VAR" forms, and "~user/" forms are returned
+// unchanged. An empty input returns empty, preserving client-go's default
+// kubeconfig loading. kubeleash needs this because MCP servers are spawned via
+// execve (no shell), so a tilde in a configured path is never expanded for us.
+func expandPath(p string) (string, error) {
+	if p == "" || p[0] != '~' {
+		return p, nil
+	}
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p, nil // ~user/... — unsupported, leave as-is
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("expand %q: %w", p, err)
+	}
+	if p == "~" {
+		return home, nil
+	}
+
+	return filepath.Join(home, p[2:]), nil
 }
 
 // parseLevel maps a level name to a slog.Level. Unknown values are an error so
