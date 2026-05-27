@@ -255,6 +255,31 @@ func TestResolvePolicyPathExpandsTilde(t *testing.T) {
 	})
 }
 
+func TestRunInvalidLogLimits(t *testing.T) {
+	t.Setenv(policyEnvVar, "")
+	dir := t.TempDir()
+	pol := filepath.Join(dir, "p.yaml")
+	if err := os.WriteFile(pol, []byte("policies: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+
+	// default tail above max -> error
+	err := run(context.Background(),
+		[]string{"--policy", pol, "--logs-default-tail-lines", "10", "--logs-max-tail-lines", "5"},
+		&out, &errOut)
+	if err == nil {
+		t.Fatal("want error when default tail > max tail")
+	}
+
+	// non-positive -> error
+	err = run(context.Background(),
+		[]string{"--policy", pol, "--logs-max-bytes", "0"}, &out, &errOut)
+	if err == nil {
+		t.Fatal("want error when a log limit < 1")
+	}
+}
+
 func TestRunPolicyFromEnv(t *testing.T) {
 	path := writeTempPolicy(t, validPolicy)
 	t.Setenv(policyEnvVar, path)

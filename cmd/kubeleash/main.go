@@ -62,12 +62,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 
 	var (
-		policyPath     = fs.String("policy", "", "path to the policy file (required; or set "+policyEnvVar+")")
-		kubeconfig     = fs.String("kubeconfig", "", "explicit kubeconfig path (empty = standard client-go loading rules)")
-		dryRun         = fs.Bool("dry-run", false, "log and report allowed mutations as would-do without touching the cluster")
-		printEffective = fs.Bool("print-effective-policy", false, "load and validate the policy, print the effective (normalized) rules, and exit")
-		showVersion    = fs.Bool("version", false, "print version information and exit")
-		logLevel       = fs.String("log-level", "info", "log level: debug, info, warn, or error")
+		policyPath      = fs.String("policy", "", "path to the policy file (required; or set "+policyEnvVar+")")
+		kubeconfig      = fs.String("kubeconfig", "", "explicit kubeconfig path (empty = standard client-go loading rules)")
+		dryRun          = fs.Bool("dry-run", false, "log and report allowed mutations as would-do without touching the cluster")
+		printEffective  = fs.Bool("print-effective-policy", false, "load and validate the policy, print the effective (normalized) rules, and exit")
+		showVersion     = fs.Bool("version", false, "print version information and exit")
+		logLevel        = fs.String("log-level", "info", "log level: debug, info, warn, or error")
+		logsDefaultTail = fs.Int64("logs-default-tail-lines", 100, "k8s_logs: lines returned when the caller omits tailLines")
+		logsMaxTail     = fs.Int64("logs-max-tail-lines", 2000, "k8s_logs: upper bound on a caller's tailLines")
+		logsMaxBytes    = fs.Int64("logs-max-bytes", 256*1024, "k8s_logs: hard byte cap on output")
 	)
 
 	if err := fs.Parse(args); err != nil {
@@ -85,6 +88,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	level, err := parseLevel(*logLevel)
 	if err != nil {
 		return err
+	}
+
+	if *logsDefaultTail < 1 || *logsMaxTail < 1 || *logsMaxBytes < 1 {
+		return fmt.Errorf("log limits must be >= 1 (got default=%d max=%d bytes=%d)", *logsDefaultTail, *logsMaxTail, *logsMaxBytes)
+	}
+	if *logsDefaultTail > *logsMaxTail {
+		return fmt.Errorf("--logs-default-tail-lines (%d) cannot exceed --logs-max-tail-lines (%d)", *logsDefaultTail, *logsMaxTail)
 	}
 
 	resolvedPolicy, err := resolvePolicyPath(*policyPath, os.Getenv(policyEnvVar))
@@ -117,6 +127,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		engine, factory,
 		intmcp.WithAudit(logger),
 		intmcp.WithDryRun(*dryRun),
+		intmcp.WithLogLimits(intmcp.LogLimits{
+			DefaultTailLines: *logsDefaultTail,
+			MaxTailLines:     *logsMaxTail,
+			MaxBytes:         *logsMaxBytes,
+		}),
 	)
 
 	return serve(ctx, srv, stderr)
