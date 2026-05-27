@@ -194,10 +194,10 @@ func mustEngine(t *testing.T, yaml string) *policy.Engine {
 }
 
 // connect wires the mcp.Server to an in-memory client session and returns it.
-func connect(t *testing.T, engine *policy.Engine, fac mcp.ClientFactory) *mcpsdk.ClientSession {
+func connect(t *testing.T, engine *policy.Engine, fac mcp.ClientFactory, opts ...mcp.Option) *mcpsdk.ClientSession {
 	t.Helper()
 
-	srv := mcp.New(engine, fac)
+	srv := mcp.New(engine, fac, opts...)
 
 	serverT, clientT := mcpsdk.NewInMemoryTransports()
 
@@ -257,6 +257,31 @@ policies:
 // ---------------------------------------------------------------------------
 // 1. Tool registration
 // ---------------------------------------------------------------------------
+
+// The version reported in the MCP initialize handshake must come from
+// WithVersion (the build-stamped value in production), and fall back to a
+// non-empty default when unset — never an empty string.
+func TestServerReportsVersion(t *testing.T) {
+	t.Parallel()
+
+	fac := &fakeFactory{client: &fakeClient{t: t}}
+
+	t.Run("from WithVersion", func(t *testing.T) {
+		t.Parallel()
+		cs := connect(t, mustEngine(t, allowReadProd), fac, mcp.WithVersion("9.9.9"))
+		if got := cs.InitializeResult().ServerInfo.Version; got != "9.9.9" {
+			t.Errorf("reported version = %q, want 9.9.9", got)
+		}
+	})
+
+	t.Run("default when unset", func(t *testing.T) {
+		t.Parallel()
+		cs := connect(t, mustEngine(t, allowReadProd), fac)
+		if got := cs.InitializeResult().ServerInfo.Version; got == "" {
+			t.Error("reported version is empty; want a non-empty default")
+		}
+	})
+}
 
 func TestToolRegistration(t *testing.T) {
 	t.Parallel()

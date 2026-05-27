@@ -117,6 +117,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		engine, factory,
 		intmcp.WithAudit(logger),
 		intmcp.WithDryRun(*dryRun),
+		intmcp.WithVersion(version),
 	)
 
 	return serve(ctx, srv, stderr)
