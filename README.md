@@ -123,6 +123,12 @@ No separate install step: on first run the plugin uses a `kubeleash` already on
 your PATH, or otherwise downloads the matching release binary (verifying its
 checksum) and caches it.
 
+Safe by default — no policy authoring required first: if you have no policy at
+`~/.kubeleash/policy.yaml`, the plugin writes a **read-only starter** there on
+first run (allow `get`/`list`/`watch`, deny `exec`/`delete`). Review and widen
+it to grant more access. (This convenience is the plugin's only; the raw binary
+still **requires** an explicit `--policy` and refuses to start without one.)
+
 The plugin also ships two skills — `using-kubeleash` (how an agent should query
 and act through the gated tools) and `authoring-kubeleash-policy` (how to write
 the policy) — so the agent understands the guardrails, not just the tool list.
