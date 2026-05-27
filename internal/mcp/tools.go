@@ -458,12 +458,20 @@ func (s *Server) scaleHandler(ctx context.Context, _ *mcp.CallToolRequest, args 
 		return nil, nil, err
 	}
 
-	// Scale acts on the scale subresource and is gated as an update.
-	if _, err := s.gate(ctx, args.resourceArgs, policy.VerbUpdate); err != nil {
+	g, err := s.gate(ctx, args.resourceArgs, policy.VerbScale)
+	if err != nil {
 		return nil, nil, err
 	}
 
-	return nil, nil, fmt.Errorf("mcp: scale: not yet implemented in v0.1 (policy permitted)")
+	if g.dryRun {
+		return wouldDo(g.verb, g.resource, g.namespace, args.Name), nil, nil
+	}
+
+	if err := g.client.Scale(ctx, g.resource, g.namespace, args.Name, args.Replicas); err != nil {
+		return nil, nil, fmt.Errorf("mcp: scale: %w", err)
+	}
+
+	return textResult(fmt.Sprintf("scaled %s %q to %d replicas", g.resource.Plural, args.Name, args.Replicas)), nil, nil
 }
 
 // capabilitiesHandler answers "what am I allowed to do in context X?" purely

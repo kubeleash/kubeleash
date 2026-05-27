@@ -50,6 +50,7 @@ type fakeClient struct {
 	allowList   bool
 	allowApply  bool
 	allowDelete bool
+	allowScale  bool
 
 	// getReturnsNotFound makes Get behave as "object absent" for apply existence
 	// checks (a genuine apierrors NotFound).
@@ -65,10 +66,12 @@ type fakeClient struct {
 	listN   int
 	applyN  int
 	deleteN int
+	scaleN  int
 
 	gotResource  policy.Resource
 	gotNamespace string
 	gotName      string
+	gotReplicas  int32
 }
 
 func (f *fakeClient) Context() string { return f.context }
@@ -148,8 +151,16 @@ func (f *fakeClient) Delete(_ context.Context, res policy.Resource, ns, name str
 	return nil
 }
 
-func (f *fakeClient) Scale(_ context.Context, _ policy.Resource, _, _ string, _ int32) error {
-	f.t.Errorf("SECURITY INVARIANT VIOLATED: kube Scale called unexpectedly")
+func (f *fakeClient) Scale(_ context.Context, res policy.Resource, ns, name string, replicas int32) error {
+	f.mu.Lock()
+	f.scaleN++
+	f.gotResource, f.gotNamespace, f.gotName, f.gotReplicas = res, ns, name, replicas
+	f.mu.Unlock()
+
+	if !f.allowScale {
+		f.t.Errorf("SECURITY INVARIANT VIOLATED: kube Scale called on a denied path")
+	}
+
 	return nil
 }
 
@@ -262,6 +273,22 @@ policies:
     allow:
       resources: ["*"]
       verbs: [get, list]
+`
+
+const allowScale = `
+policies:
+  - contexts: ".*"
+    allow:
+      resources: ["*"]
+      verbs: [scale]
+`
+
+const allowUpdateOnly = `
+policies:
+  - contexts: ".*"
+    allow:
+      resources: ["*"]
+      verbs: [update]
 `
 
 // ---------------------------------------------------------------------------
@@ -685,8 +712,8 @@ policies:
 	}
 }
 
-// logs/exec/scale: gate passes (policy allows) but execution is deferred (v0.1).
-func TestLogsScaleNotImplementedAfterPolicyApproval(t *testing.T) {
+// logs/exec: gate passes (policy allows) but execution is deferred (v0.1).
+func TestLogsNotImplementedAfterPolicyApproval(t *testing.T) {
 	t.Parallel()
 
 	const cfg = `
@@ -694,7 +721,7 @@ policies:
   - contexts: ".*"
     allow:
       resources: ["*"]
-      verbs: [logs, update]
+      verbs: [logs]
 `
 	fc := &fakeClient{t: t, res: policy.Resource{Version: "v1", Kind: "Pod", Plural: "pods"}, scope: kube.ScopeNamespaced}
 
@@ -704,12 +731,35 @@ policies:
 	if !logsOut.IsError || !strings.Contains(resultText(t, logsOut), "not yet implemented") {
 		t.Errorf("logs: want not-implemented error, got isErr=%v %q", logsOut.IsError, resultText(t, logsOut))
 	}
+}
 
-	scaleOut := call(t, cs, "k8s_scale", map[string]any{
-		"resource": "deployments", "name": "d1", "namespace": "default", "replicas": 3,
-	})
-	if !scaleOut.IsError || !strings.Contains(resultText(t, scaleOut), "not yet implemented") {
-		t.Errorf("scale: want not-implemented error, got isErr=%v %q", scaleOut.IsError, resultText(t, scaleOut))
+func TestScaleAllowed(t *testing.T) {
+	t.Parallel()
+	fc := &fakeClient{t: t, context: "c", res: policy.Resource{Plural: "deployments"}, scope: kube.ScopeNamespaced, allowScale: true}
+	cs := connect(t, mustEngine(t, allowScale), &fakeFactory{client: fc})
+	res := call(t, cs, "k8s_scale", map[string]any{"resource": "deployments", "name": "web", "namespace": "default", "replicas": 3})
+	if got := resultText(t, res); !strings.Contains(got, "scaled") {
+		t.Errorf("result = %q, want a scaled confirmation", got)
+	}
+	if fc.scaleN != 1 || fc.gotReplicas != 3 {
+		t.Errorf("scaleN=%d replicas=%d, want 1 and 3", fc.scaleN, fc.gotReplicas)
+	}
+}
+
+func TestScaleGatedAsScaleNotUpdate(t *testing.T) {
+	t.Parallel()
+	// Policy grants only `update`; scale must be DENIED (zero I/O).
+	fc := &fakeClient{t: t, context: "c", res: policy.Resource{Plural: "deployments"}, scope: kube.ScopeNamespaced, allowScale: false}
+	cs := connect(t, mustEngine(t, allowUpdateOnly), &fakeFactory{client: fc})
+	res := call(t, cs, "k8s_scale", map[string]any{"resource": "deployments", "name": "web", "namespace": "default", "replicas": 3})
+	if !res.IsError {
+		t.Fatalf("expected denied scale to be an error result")
+	}
+	if got := resultText(t, res); !strings.Contains(strings.ToLower(got), "denied") && !strings.Contains(strings.ToLower(got), "not granted") {
+		t.Errorf("result = %q, want a denial", got)
+	}
+	if fc.scaleN != 0 {
+		t.Errorf("scaleN=%d, want 0 (zero I/O on deny)", fc.scaleN)
 	}
 }
 
