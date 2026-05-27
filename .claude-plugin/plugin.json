@@ -28,8 +28,9 @@
     "policy_path": {
       "type": "file",
       "title": "Policy file",
-      "description": "Path to your kubeleash policy.yaml. Required — kubeleash is default-deny and refuses to start without an explicit policy.",
-      "required": true
+      "description": "Path to your kubeleash policy. Defaults to ~/.kubeleash/policy.yaml; if no file exists there, a read-only starter policy (get/list/watch, deny exec/delete) is created on first run. Review and widen it to grant more access — kubeleash is default-deny.",
+      "required": false,
+      "default": "${HOME}/.kubeleash/policy.yaml"
     },
     "kubeconfig_path": {
       "type": "file",
