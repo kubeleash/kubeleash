@@ -3,7 +3,14 @@
 package kube
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
+	"sort"
+	"strconv"
 	"sync"
 
 	"k8s.io/client-go/rest"
@@ -24,6 +31,13 @@ type Options struct {
 type Factory struct {
 	loader clientcmd.ClientConfigLoader
 
+	// fpKey keys the HMAC used to derive cache keys from connection identity.
+	// It is random per process: the fingerprint is a change-detecting lookup
+	// key, not stored credential material, so a keyed digest (rather than a bare
+	// hash of secrets like passwords/tokens) keeps the cache key from being a
+	// brute-force target while staying stable within a single in-memory cache.
+	fpKey []byte
+
 	mu      sync.Mutex
 	clients map[string]Client
 }
@@ -35,26 +49,36 @@ func NewFactory(opts Options) (*Factory, error) {
 		rules.ExplicitPath = opts.KubeconfigPath
 	}
 
+	fpKey := make([]byte, 32)
+	if _, err := rand.Read(fpKey); err != nil {
+		return nil, fmt.Errorf("kube: generate fingerprint key: %w", err)
+	}
+
 	return &Factory{
 		loader:  rules,
+		fpKey:   fpKey,
 		clients: make(map[string]Client),
 	}, nil
 }
 
 // Client returns a [Client] scoped to the named context. An empty contextName
-// uses the kubeconfig's current-context. Built clients are cached per resolved
-// context key.
+// uses the kubeconfig's current-context. The kubeconfig is re-read on every call
+// and the cache is keyed on a fingerprint of the resolved connection identity, so
+// an out-of-band kubeconfig change (new port, rotated credentials) yields a fresh
+// client instead of a stale cached one.
 func (f *Factory) Client(contextName string) (Client, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	if c, ok := f.clients[contextName]; ok {
-		return c, nil
-	}
-
 	cfg, resolvedName, err := f.restConfig(contextName)
 	if err != nil {
 		return nil, err
+	}
+
+	cacheKey := resolvedName + "\x00" + fingerprint(f.fpKey, cfg)
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if c, ok := f.clients[cacheKey]; ok {
+		return c, nil
 	}
 
 	c, err := newClient(resolvedName, cfg)
@@ -62,12 +86,110 @@ func (f *Factory) Client(contextName string) (Client, error) {
 		return nil, err
 	}
 
-	// Cache under both the requested key (possibly "") and the resolved name so
-	// repeat lookups by either form hit the cache.
-	f.clients[contextName] = c
-	f.clients[resolvedName] = c
+	// Stale entries are intentionally never evicted; a session sees only a handful of distinct configs.
+	f.clients[cacheKey] = c
 
 	return c, nil
+}
+
+// fingerprint derives a cache key from the connection-identifying fields of a
+// rest.Config so that any change to where or how we connect (endpoint,
+// credentials, exec-plugin arguments, impersonation) produces a distinct key.
+// Every string is length-prefixed and every list/optional block is count- or
+// presence-prefixed, so the encoding is injective: distinct configs cannot
+// collide. It uses HMAC keyed with a per-process random key rather than a bare
+// hash, because some inputs (password, bearer token, client key) are sensitive:
+// a keyed digest is not a brute-force target, and this is a lookup key, never
+// stored credential material.
+func fingerprint(key []byte, cfg *rest.Config) string {
+	h := hmac.New(sha256.New, key)
+
+	writeBytes := func(b []byte) {
+		var n [8]byte
+		binary.BigEndian.PutUint64(n[:], uint64(len(b)))
+		h.Write(n[:])
+		h.Write(b)
+	}
+	writeStr := func(s string) { writeBytes([]byte(s)) }
+	writeCount := func(n int) {
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], uint64(uint(n))) //nolint:gosec // n is always a non-negative length/count
+		h.Write(b[:])
+	}
+
+	tc := cfg.TLSClientConfig
+	writeStr(cfg.Host)
+	writeStr(strconv.FormatBool(tc.Insecure))
+	writeStr(tc.ServerName)
+	writeStr(tc.CAFile)
+	writeStr(tc.CertFile)
+	writeStr(tc.KeyFile)
+	writeBytes(tc.CAData)
+	writeBytes(tc.CertData)
+	writeBytes(tc.KeyData)
+
+	writeStr(cfg.Username)
+	writeStr(cfg.Password)
+	writeStr(cfg.BearerToken)
+	writeStr(cfg.BearerTokenFile)
+
+	writeStr(cfg.Impersonate.UserName)
+	writeStr(cfg.Impersonate.UID)
+	writeCount(len(cfg.Impersonate.Groups))
+	for _, g := range cfg.Impersonate.Groups {
+		writeStr(g)
+	}
+	extra := cfg.Impersonate.Extra
+	writeCount(len(extra))
+	for _, k := range sortedKeys(extra) {
+		writeStr(k)
+		writeCount(len(extra[k]))
+		for _, v := range extra[k] {
+			writeStr(v)
+		}
+	}
+
+	if ap := cfg.AuthProvider; ap != nil {
+		writeCount(1)
+		writeStr(ap.Name)
+		writeCount(len(ap.Config))
+		for _, k := range sortedKeys(ap.Config) {
+			writeStr(k)
+			writeStr(ap.Config[k])
+		}
+	} else {
+		writeCount(0)
+	}
+
+	if ep := cfg.ExecProvider; ep != nil {
+		writeCount(1)
+		writeStr(ep.Command)
+		writeStr(ep.APIVersion)
+		writeCount(len(ep.Args))
+		for _, a := range ep.Args {
+			writeStr(a)
+		}
+		writeCount(len(ep.Env))
+		for _, e := range ep.Env {
+			writeStr(e.Name)
+			writeStr(e.Value)
+		}
+	} else {
+		writeCount(0)
+	}
+
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// sortedKeys returns the keys of m in deterministic order so a map's hash
+// contribution does not depend on Go's randomized map iteration.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // ResolveContext returns the concrete context name for contextName, defaulting

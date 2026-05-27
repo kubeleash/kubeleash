@@ -200,6 +200,61 @@ func TestRunInvalidLogLevelIsError(t *testing.T) {
 	}
 }
 
+func TestExpandPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cases := []struct {
+		name, in, want string
+	}{
+		{"empty", "", ""},
+		{"tilde slash", "~/.kube/config", filepath.Join(home, ".kube/config")},
+		{"tilde slash empty", "~/", home},
+		{"bare tilde", "~", home},
+		{"absolute", "/abs/path", "/abs/path"},
+		{"relative", "rel/x", "rel/x"},
+		{"dollar home literal", "$HOME/.kube/config", "$HOME/.kube/config"},
+		{"tilde user unsupported", "~bob/x", "~bob/x"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := expandPath(c.in)
+			if err != nil {
+				t.Fatalf("expandPath(%q): %v", c.in, err)
+			}
+			if got != c.want {
+				t.Errorf("expandPath(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestResolvePolicyPathExpandsTilde(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	want := filepath.Join(home, "p.yaml")
+
+	t.Run("from flag", func(t *testing.T) {
+		got, err := resolvePolicyPath("~/p.yaml", "")
+		if err != nil {
+			t.Fatalf("resolvePolicyPath: %v", err)
+		}
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("from env", func(t *testing.T) {
+		got, err := resolvePolicyPath("", "~/p.yaml")
+		if err != nil {
+			t.Fatalf("resolvePolicyPath: %v", err)
+		}
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}
+
 func TestRunPolicyFromEnv(t *testing.T) {
 	path := writeTempPolicy(t, validPolicy)
 	t.Setenv(policyEnvVar, path)
