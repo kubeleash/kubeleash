@@ -51,6 +51,7 @@ type fakeClient struct {
 	allowApply  bool
 	allowDelete bool
 	allowScale  bool
+	allowLogs   bool
 
 	// getReturnsNotFound makes Get behave as "object absent" for apply existence
 	// checks (a genuine apierrors NotFound).
@@ -67,11 +68,14 @@ type fakeClient struct {
 	applyN  int
 	deleteN int
 	scaleN  int
+	logsN   int
 
 	gotResource  policy.Resource
 	gotNamespace string
 	gotName      string
 	gotReplicas  int32
+	gotTail      *int64
+	logsOut      string
 }
 
 func (f *fakeClient) Context() string { return f.context }
@@ -164,9 +168,21 @@ func (f *fakeClient) Scale(_ context.Context, res policy.Resource, ns, name stri
 	return nil
 }
 
-func (f *fakeClient) Logs(_ context.Context, _, _ string, _ kube.LogsOptions) (string, error) {
-	f.t.Errorf("SECURITY INVARIANT VIOLATED: kube Logs called unexpectedly")
-	return "", nil
+func (f *fakeClient) Logs(_ context.Context, ns, name string, opts kube.LogsOptions) (string, error) {
+	f.mu.Lock()
+	f.logsN++
+	f.gotNamespace, f.gotName, f.gotTail = ns, name, opts.TailLines
+	f.mu.Unlock()
+
+	if !f.allowLogs {
+		f.t.Errorf("SECURITY INVARIANT VIOLATED: kube Logs called on a denied path")
+	}
+
+	if f.logsOut == "" {
+		return "hello from pod", nil
+	}
+
+	return f.logsOut, nil
 }
 
 // fakeFactory hands out a single fakeClient regardless of context.
@@ -289,6 +305,14 @@ policies:
     allow:
       resources: ["*"]
       verbs: [update]
+`
+
+const allowLogsPolicy = `
+policies:
+  - contexts: ".*"
+    allow:
+      resources: ["*"]
+      verbs: [logs]
 `
 
 // ---------------------------------------------------------------------------
@@ -712,24 +736,34 @@ policies:
 	}
 }
 
-// logs/exec: gate passes (policy allows) but execution is deferred (v0.1).
-func TestLogsNotImplementedAfterPolicyApproval(t *testing.T) {
+func TestLogsAllowedRendersAndClamps(t *testing.T) {
 	t.Parallel()
+	fc := &fakeClient{t: t, context: "c", res: policy.Resource{Plural: "pods"}, scope: kube.ScopeNamespaced, allowLogs: true}
+	cs := connect(t, mustEngine(t, allowLogsPolicy), &fakeFactory{client: fc})
 
-	const cfg = `
-policies:
-  - contexts: ".*"
-    allow:
-      resources: ["*"]
-      verbs: [logs]
-`
-	fc := &fakeClient{t: t, res: policy.Resource{Version: "v1", Kind: "Pod", Plural: "pods"}, scope: kube.ScopeNamespaced}
+	// no tailLines -> default 100 (connect() uses default LogLimits)
+	res := call(t, cs, "k8s_logs", map[string]any{"resource": "pods", "name": "web", "namespace": "default"})
+	if got := resultText(t, res); !strings.Contains(got, "hello from pod") {
+		t.Errorf("result = %q", got)
+	}
+	if fc.gotTail == nil || *fc.gotTail != 100 {
+		t.Errorf("default tail = %v, want 100", fc.gotTail)
+	}
 
-	cs := connect(t, mustEngine(t, cfg), &fakeFactory{client: fc})
+	// tailLines above the max (2000) -> clamped to 2000
+	call(t, cs, "k8s_logs", map[string]any{"resource": "pods", "name": "web", "namespace": "default", "tailLines": 99999})
+	if fc.gotTail == nil || *fc.gotTail != 2000 {
+		t.Errorf("clamped tail = %v, want 2000", fc.gotTail)
+	}
+}
 
-	logsOut := call(t, cs, "k8s_logs", map[string]any{"resource": "pods", "name": "p1", "namespace": "default"})
-	if !logsOut.IsError || !strings.Contains(resultText(t, logsOut), "not yet implemented") {
-		t.Errorf("logs: want not-implemented error, got isErr=%v %q", logsOut.IsError, resultText(t, logsOut))
+func TestLogsDeniedZeroIO(t *testing.T) {
+	t.Parallel()
+	fc := &fakeClient{t: t, context: "c", res: policy.Resource{Plural: "pods"}, scope: kube.ScopeNamespaced, allowLogs: false}
+	cs := connect(t, mustEngine(t, allowReadProd), &fakeFactory{client: fc}) // allowReadProd grants get/list, NOT logs
+	call(t, cs, "k8s_logs", map[string]any{"resource": "pods", "name": "web", "namespace": "default"})
+	if fc.logsN != 0 {
+		t.Errorf("logsN=%d, want 0 (zero I/O on deny)", fc.logsN)
 	}
 }
 

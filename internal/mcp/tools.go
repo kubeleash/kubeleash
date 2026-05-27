@@ -44,7 +44,11 @@ type applyArgs struct {
 
 type logsArgs struct {
 	resourceArgs
-	Container string `json:"container,omitempty" jsonschema:"container name within the pod"`
+	Container    string `json:"container,omitempty" jsonschema:"container name within the pod"`
+	TailLines    *int64 `json:"tailLines,omitempty" jsonschema:"max lines from the end of the log (default 100, capped by the server)"`
+	Previous     bool   `json:"previous,omitempty" jsonschema:"read logs from the previous (crashed) container instance"`
+	SinceSeconds *int64 `json:"sinceSeconds,omitempty" jsonschema:"only logs newer than this many seconds"`
+	Timestamps   bool   `json:"timestamps,omitempty" jsonschema:"prefix each line with an RFC3339 timestamp"`
 }
 
 type execArgs struct {
@@ -418,23 +422,54 @@ func (s *Server) deleteHandler(ctx context.Context, _ *mcp.CallToolRequest, args
 	return textResult(fmt.Sprintf("deleted %s %q", g.resource.Plural, args.Name)), nil, nil
 }
 
-// logsHandler, execHandler and scaleHandler run the FULL policy gate (so the
-// verb wiring and the zero-I/O-on-deny invariant are exercised today) but
-// return a clear "not yet implemented" error AFTER policy approval. The kube
-// Client interface deliberately does not yet expose logs/exec/scale
-// subresources (see internal/kube/kube.go); wiring the gate now lets execution
-// land later without re-touching the security path. See report (decision (b)).
+// execHandler runs the FULL policy gate (so the verb wiring and the
+// zero-I/O-on-deny invariant are exercised) but returns a clear "not yet
+// implemented" error after policy approval. The kube Client interface does not
+// yet expose the exec subresource (see internal/kube/kube.go).
 
 func (s *Server) logsHandler(ctx context.Context, _ *mcp.CallToolRequest, args logsArgs) (*mcp.CallToolResult, any, error) {
 	if err := requireName("logs", args.Name); err != nil {
 		return nil, nil, err
 	}
 
-	if _, err := s.gate(ctx, args.resourceArgs, policy.VerbLogs); err != nil {
+	g, err := s.gate(ctx, args.resourceArgs, policy.VerbLogs)
+	if err != nil {
 		return nil, nil, err
 	}
 
-	return nil, nil, fmt.Errorf("mcp: logs: not yet implemented in v0.1 (policy permitted)")
+	if g.dryRun {
+		return wouldDo(g.verb, g.resource, g.namespace, args.Name), nil, nil
+	}
+
+	tail := s.logLimits.DefaultTailLines
+	if args.TailLines != nil {
+		tail = *args.TailLines
+		if tail < 1 {
+			tail = 1
+		}
+		if tail > s.logLimits.MaxTailLines {
+			tail = s.logLimits.MaxTailLines
+		}
+	}
+	maxBytes := s.logLimits.MaxBytes
+
+	out, err := g.client.Logs(ctx, g.namespace, args.Name, kube.LogsOptions{
+		Container:    args.Container,
+		TailLines:    &tail,
+		Previous:     args.Previous,
+		SinceSeconds: args.SinceSeconds,
+		Timestamps:   args.Timestamps,
+		LimitBytes:   &maxBytes,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("mcp: logs: %w", err)
+	}
+
+	if out == "" {
+		return textResult("(no log output)"), nil, nil
+	}
+
+	return textResult(out), nil, nil
 }
 
 func (s *Server) execHandler(ctx context.Context, _ *mcp.CallToolRequest, args execArgs) (*mcp.CallToolResult, any, error) {
@@ -450,7 +485,7 @@ func (s *Server) execHandler(ctx context.Context, _ *mcp.CallToolRequest, args e
 		return nil, nil, err
 	}
 
-	return nil, nil, fmt.Errorf("mcp: exec: not yet implemented in v0.1 (policy permitted)")
+	return nil, nil, fmt.Errorf("mcp: exec: not yet implemented (policy permitted)")
 }
 
 func (s *Server) scaleHandler(ctx context.Context, _ *mcp.CallToolRequest, args scaleArgs) (*mcp.CallToolResult, any, error) {
