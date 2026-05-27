@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "kubeleash",
   "display_name": "kubeleash",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Kubernetes MCP server with RBAC-style, context-scoped guardrails for AI agents.",
   "long_description": "kubeleash is a Kubernetes MCP server with a twist: RBAC-style, context-scoped access control for AI agents. Point it at a kubeconfig — even a cluster-admin one — and a local policy file constrains what the agent can actually do, per kube context. Destructive actions are gated before any call reaches the cluster. Deny wins, default-deny, and a broken policy refuses to start — it never fails open. Runs entirely locally over stdio; there is no remote/hosted connector and zero telemetry.",
   "icon": "icon.png",
