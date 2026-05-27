@@ -14,6 +14,12 @@ kubeleash only ever subtracts.
 it with a different verb, resource, or context. If something is denied, report
 it plainly and stop — or ask the operator to widen the policy.
 
+**If the `k8s_*` tools are not present — kubeleash is disabled, failed to load,
+or not installed — STOP. Do not fall back to `kubectl`, `k9s`, `oc`, the
+Kubernetes API, or any other path to the cluster. The absence of the leash is
+not permission to act unleashed. Report that kubeleash is unavailable and ask
+the operator to enable or fix it.**
+
 ## Start by asking what you're allowed to do
 
 Before acting in a context, call **`k8s_capabilities`** (optionally with a

@@ -27,6 +27,64 @@ import { fileURLToPath } from 'node:url';
 
 const REPO = 'kubeleash/kubeleash';
 
+// DEFAULT_POLICY is written on first run when the configured --policy file does
+// not exist. Posture: READ-ONLY everywhere — inspect (get/list/watch), never
+// mutate/exec/delete — so a fresh install is useful but safe. Widen deliberately.
+const DEFAULT_POLICY = `# kubeleash default policy — created automatically on first run.
+# Posture: READ-ONLY everywhere. The agent may inspect (get/list/watch) but
+# cannot mutate, exec, or delete. Widen deliberately; deny wins; default-deny.
+# Full guide + examples: https://github.com/kubeleash/kubeleash (examples/policy.yaml)
+policies:
+  - contexts: ".*"
+    allow:
+      resources: ["*"]
+      verbs: [get, list, watch]
+    deny:
+      # Explicit so the agent gets a clear "denied by deny rule" on these.
+      verbs: [exec, delete]
+`;
+
+// expandTilde expands a leading "~" or "~/" to the home directory. Other forms
+// (absolute, relative, "~user/") are returned unchanged. Mirrors the binary's
+// own expansion, needed here because the launcher does its own existence check.
+export function expandTilde(p) {
+  if (!p || p[0] !== '~') return p;
+  if (p !== '~' && !p.startsWith('~/')) return p;
+  const home = os.homedir();
+  return p === '~' ? home : path.join(home, p.slice(2));
+}
+
+// policyPathFromArgs returns the --policy value from argv, supporting both
+// "--policy <path>" and "--policy=<path>". Returns null when absent.
+export function policyPathFromArgs(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--policy') return argv[i + 1] ?? null;
+    if (argv[i].startsWith('--policy=')) return argv[i].slice('--policy='.length);
+  }
+  return null;
+}
+
+// ensurePolicy writes DEFAULT_POLICY to rawPath when a path is given and no file
+// exists there yet. Returns 'skipped' (no path), 'exists' (left untouched), or
+// 'created'. Never overwrites: it opens with the exclusive "wx" flag, so a
+// concurrent creator is treated as 'exists'.
+export async function ensurePolicy(rawPath) {
+  if (!rawPath) return 'skipped';
+  const p = expandTilde(rawPath);
+  await fs.mkdir(path.dirname(p), { recursive: true });
+  try {
+    await fs.writeFile(p, DEFAULT_POLICY, { flag: 'wx' });
+  } catch (e) {
+    if (e.code === 'EEXIST') return 'exists';
+    throw e;
+  }
+  process.stderr.write(
+    `kubeleash launcher: no policy at ${p}; wrote a read-only default ` +
+      `(get/list/watch, deny exec/delete) — review and widen it.\n`,
+  );
+  return 'created';
+}
+
 function die(msg) {
   // Diagnostics go to stderr — stdout is the MCP transport.
   process.stderr.write(`kubeleash launcher: ${msg}\n`);
@@ -158,6 +216,7 @@ async function ensureBinary() {
 }
 
 async function main() {
+  await ensurePolicy(policyPathFromArgs(process.argv.slice(2)));
   const bin = await ensureBinary();
   const child = spawn(bin, process.argv.slice(2), { stdio: 'inherit', env: process.env });
   child.on('error', (e) => die(`failed to start ${bin}: ${e.message}`));
@@ -170,4 +229,8 @@ async function main() {
   });
 }
 
-main().catch((e) => die(e?.stack || String(e)));
+// Only run when executed directly (node launch.mjs), not when imported by tests.
+const isEntry = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isEntry) {
+  main().catch((e) => die(e?.stack || String(e)));
+}
