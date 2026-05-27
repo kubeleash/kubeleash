@@ -1,7 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 package mcp
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestNormalizeExecLimits(t *testing.T) {
+	// zero -> code defaults
+	got := normalizeExecLimits(ExecLimits{})
+	if got.Timeout != 30*time.Second || got.MaxBytes != 256*1024 {
+		t.Fatalf("defaults wrong: %+v", got)
+	}
+	// non-positive -> defaults
+	got = normalizeExecLimits(ExecLimits{Timeout: -1, MaxBytes: -9})
+	if got.Timeout != 30*time.Second || got.MaxBytes != 256*1024 {
+		t.Fatalf("non-positive not defaulted: %+v", got)
+	}
+	// positive values are kept
+	got = normalizeExecLimits(ExecLimits{Timeout: 5 * time.Second, MaxBytes: 1024})
+	if got.Timeout != 5*time.Second || got.MaxBytes != 1024 {
+		t.Fatalf("positive values not kept: %+v", got)
+	}
+}
 
 func TestNormalizeLogLimits(t *testing.T) {
 	// zero -> code defaults

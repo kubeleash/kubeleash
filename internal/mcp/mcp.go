@@ -19,6 +19,8 @@
 package mcp
 
 import (
+	"time"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/kubeleash/kubeleash/internal/audit"
@@ -62,6 +64,29 @@ func normalizeLogLimits(l LogLimits) LogLimits {
 	return l
 }
 
+const (
+	defaultExecTimeout        = 30 * time.Second
+	defaultExecMaxBytes int64 = 256 * 1024
+)
+
+// ExecLimits bounds k8s_exec. Non-positive fields fall back to the code
+// defaults. These are operator ceilings; there is no per-call override.
+type ExecLimits struct {
+	Timeout  time.Duration
+	MaxBytes int64
+}
+
+func normalizeExecLimits(l ExecLimits) ExecLimits {
+	if l.Timeout <= 0 {
+		l.Timeout = defaultExecTimeout
+	}
+	if l.MaxBytes <= 0 {
+		l.MaxBytes = defaultExecMaxBytes
+	}
+
+	return l
+}
+
 // ClientFactory is the subset of [kube.Factory] the MCP layer depends on: it
 // hands out a [kube.Client] for a (possibly empty) context name. *kube.Factory
 // satisfies it; tests inject a fake.
@@ -96,6 +121,9 @@ type Server struct {
 	// logLimits controls the tail-line and byte caps applied to k8s_logs output.
 	// Normalized by New via normalizeLogLimits so the zero value is safe.
 	logLimits LogLimits
+	// execLimits controls the timeout and byte cap applied to k8s_exec output.
+	// Normalized by New via normalizeExecLimits so the zero value is safe.
+	execLimits ExecLimits
 }
 
 // Option configures a [Server] at construction. Use functional options so the
@@ -130,6 +158,12 @@ func WithLogLimits(l LogLimits) Option {
 	return func(s *Server) { s.logLimits = l }
 }
 
+// WithExecLimits sets the k8s_exec timeout and output cap. Non-positive fields
+// keep the default.
+func WithExecLimits(l ExecLimits) Option {
+	return func(s *Server) { s.execLimits = l }
+}
+
 // New builds a Server, registering all kubeleash tools on a fresh MCP server.
 // Both engine and factory are required; passing nil for either is a programming
 // error and will surface as a panic on first use rather than a silent
@@ -147,6 +181,7 @@ func New(engine *policy.Engine, factory ClientFactory, opts ...Option) *Server {
 	}
 
 	s.logLimits = normalizeLogLimits(s.logLimits)
+	s.execLimits = normalizeExecLimits(s.execLimits)
 
 	// Build the server after options so the reported version reflects WithVersion.
 	s.srv = mcp.NewServer(&mcp.Implementation{Name: "kubeleash", Version: s.version}, nil)
