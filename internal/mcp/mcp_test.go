@@ -50,6 +50,8 @@ type fakeClient struct {
 	allowList   bool
 	allowApply  bool
 	allowDelete bool
+	allowScale  bool
+	allowLogs   bool
 
 	// getReturnsNotFound makes Get behave as "object absent" for apply existence
 	// checks (a genuine apierrors NotFound).
@@ -65,10 +67,15 @@ type fakeClient struct {
 	listN   int
 	applyN  int
 	deleteN int
+	scaleN  int
+	logsN   int
 
 	gotResource  policy.Resource
 	gotNamespace string
 	gotName      string
+	gotReplicas  int32
+	gotTail      *int64
+	logsOut      string
 }
 
 func (f *fakeClient) Context() string { return f.context }
@@ -146,6 +153,36 @@ func (f *fakeClient) Delete(_ context.Context, res policy.Resource, ns, name str
 	}
 
 	return nil
+}
+
+func (f *fakeClient) Scale(_ context.Context, res policy.Resource, ns, name string, replicas int32) error {
+	f.mu.Lock()
+	f.scaleN++
+	f.gotResource, f.gotNamespace, f.gotName, f.gotReplicas = res, ns, name, replicas
+	f.mu.Unlock()
+
+	if !f.allowScale {
+		f.t.Errorf("SECURITY INVARIANT VIOLATED: kube Scale called on a denied path")
+	}
+
+	return nil
+}
+
+func (f *fakeClient) Logs(_ context.Context, ns, name string, opts kube.LogsOptions) (string, error) {
+	f.mu.Lock()
+	f.logsN++
+	f.gotNamespace, f.gotName, f.gotTail = ns, name, opts.TailLines
+	f.mu.Unlock()
+
+	if !f.allowLogs {
+		f.t.Errorf("SECURITY INVARIANT VIOLATED: kube Logs called on a denied path")
+	}
+
+	if f.logsOut == "" {
+		return "hello from pod", nil
+	}
+
+	return f.logsOut, nil
 }
 
 // fakeFactory hands out a single fakeClient regardless of context.
@@ -252,6 +289,30 @@ policies:
     allow:
       resources: ["*"]
       verbs: [get, list]
+`
+
+const allowScale = `
+policies:
+  - contexts: ".*"
+    allow:
+      resources: ["*"]
+      verbs: [scale]
+`
+
+const allowUpdateOnly = `
+policies:
+  - contexts: ".*"
+    allow:
+      resources: ["*"]
+      verbs: [update]
+`
+
+const allowLogsPolicy = `
+policies:
+  - contexts: ".*"
+    allow:
+      resources: ["*"]
+      verbs: [logs]
 `
 
 // ---------------------------------------------------------------------------
@@ -700,31 +761,64 @@ policies:
 	}
 }
 
-// logs/exec/scale: gate passes (policy allows) but execution is deferred (v0.1).
-func TestLogsScaleNotImplementedAfterPolicyApproval(t *testing.T) {
+func TestLogsAllowedRendersAndClamps(t *testing.T) {
 	t.Parallel()
+	fc := &fakeClient{t: t, context: "c", res: policy.Resource{Plural: "pods"}, scope: kube.ScopeNamespaced, allowLogs: true}
+	cs := connect(t, mustEngine(t, allowLogsPolicy), &fakeFactory{client: fc})
 
-	const cfg = `
-policies:
-  - contexts: ".*"
-    allow:
-      resources: ["*"]
-      verbs: [logs, update]
-`
-	fc := &fakeClient{t: t, res: policy.Resource{Version: "v1", Kind: "Pod", Plural: "pods"}, scope: kube.ScopeNamespaced}
-
-	cs := connect(t, mustEngine(t, cfg), &fakeFactory{client: fc})
-
-	logsOut := call(t, cs, "k8s_logs", map[string]any{"resource": "pods", "name": "p1", "namespace": "default"})
-	if !logsOut.IsError || !strings.Contains(resultText(t, logsOut), "not yet implemented") {
-		t.Errorf("logs: want not-implemented error, got isErr=%v %q", logsOut.IsError, resultText(t, logsOut))
+	// no tailLines -> default 100 (connect() uses default LogLimits)
+	res := call(t, cs, "k8s_logs", map[string]any{"resource": "pods", "name": "web", "namespace": "default"})
+	if got := resultText(t, res); !strings.Contains(got, "hello from pod") {
+		t.Errorf("result = %q", got)
+	}
+	if fc.gotTail == nil || *fc.gotTail != 100 {
+		t.Errorf("default tail = %v, want 100", fc.gotTail)
 	}
 
-	scaleOut := call(t, cs, "k8s_scale", map[string]any{
-		"resource": "deployments", "name": "d1", "namespace": "default", "replicas": 3,
-	})
-	if !scaleOut.IsError || !strings.Contains(resultText(t, scaleOut), "not yet implemented") {
-		t.Errorf("scale: want not-implemented error, got isErr=%v %q", scaleOut.IsError, resultText(t, scaleOut))
+	// tailLines above the max (2000) -> clamped to 2000
+	call(t, cs, "k8s_logs", map[string]any{"resource": "pods", "name": "web", "namespace": "default", "tailLines": 99999})
+	if fc.gotTail == nil || *fc.gotTail != 2000 {
+		t.Errorf("clamped tail = %v, want 2000", fc.gotTail)
+	}
+}
+
+func TestLogsDeniedZeroIO(t *testing.T) {
+	t.Parallel()
+	fc := &fakeClient{t: t, context: "c", res: policy.Resource{Plural: "pods"}, scope: kube.ScopeNamespaced, allowLogs: false}
+	cs := connect(t, mustEngine(t, allowReadProd), &fakeFactory{client: fc}) // allowReadProd grants get/list, NOT logs
+	call(t, cs, "k8s_logs", map[string]any{"resource": "pods", "name": "web", "namespace": "default"})
+	if fc.logsN != 0 {
+		t.Errorf("logsN=%d, want 0 (zero I/O on deny)", fc.logsN)
+	}
+}
+
+func TestScaleAllowed(t *testing.T) {
+	t.Parallel()
+	fc := &fakeClient{t: t, context: "c", res: policy.Resource{Plural: "deployments"}, scope: kube.ScopeNamespaced, allowScale: true}
+	cs := connect(t, mustEngine(t, allowScale), &fakeFactory{client: fc})
+	res := call(t, cs, "k8s_scale", map[string]any{"resource": "deployments", "name": "web", "namespace": "default", "replicas": 3})
+	if got := resultText(t, res); !strings.Contains(got, "scaled") {
+		t.Errorf("result = %q, want a scaled confirmation", got)
+	}
+	if fc.scaleN != 1 || fc.gotReplicas != 3 {
+		t.Errorf("scaleN=%d replicas=%d, want 1 and 3", fc.scaleN, fc.gotReplicas)
+	}
+}
+
+func TestScaleGatedAsScaleNotUpdate(t *testing.T) {
+	t.Parallel()
+	// Policy grants only `update`; scale must be DENIED (zero I/O).
+	fc := &fakeClient{t: t, context: "c", res: policy.Resource{Plural: "deployments"}, scope: kube.ScopeNamespaced, allowScale: false}
+	cs := connect(t, mustEngine(t, allowUpdateOnly), &fakeFactory{client: fc})
+	res := call(t, cs, "k8s_scale", map[string]any{"resource": "deployments", "name": "web", "namespace": "default", "replicas": 3})
+	if !res.IsError {
+		t.Fatalf("expected denied scale to be an error result")
+	}
+	if got := resultText(t, res); !strings.Contains(strings.ToLower(got), "denied") && !strings.Contains(strings.ToLower(got), "not granted") {
+		t.Errorf("result = %q, want a denial", got)
+	}
+	if fc.scaleN != 0 {
+		t.Errorf("scaleN=%d, want 0 (zero I/O on deny)", fc.scaleN)
 	}
 }
 

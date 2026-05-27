@@ -31,6 +31,37 @@ import (
 // build-stamped version from main so it tracks the release tag automatically.
 const defaultVersion = "dev"
 
+const (
+	defaultLogTailLines int64 = 100
+	defaultMaxTailLines int64 = 2000
+	defaultMaxLogBytes  int64 = 256 * 1024
+)
+
+// LogLimits bounds k8s_logs output. Non-positive fields fall back to the code
+// defaults; a default tail above the max is clamped down to the max.
+type LogLimits struct {
+	DefaultTailLines int64
+	MaxTailLines     int64
+	MaxBytes         int64
+}
+
+func normalizeLogLimits(l LogLimits) LogLimits {
+	if l.DefaultTailLines <= 0 {
+		l.DefaultTailLines = defaultLogTailLines
+	}
+	if l.MaxTailLines <= 0 {
+		l.MaxTailLines = defaultMaxTailLines
+	}
+	if l.MaxBytes <= 0 {
+		l.MaxBytes = defaultMaxLogBytes
+	}
+	if l.DefaultTailLines > l.MaxTailLines {
+		l.DefaultTailLines = l.MaxTailLines
+	}
+
+	return l
+}
+
 // ClientFactory is the subset of [kube.Factory] the MCP layer depends on: it
 // hands out a [kube.Client] for a (possibly empty) context name. *kube.Factory
 // satisfies it; tests inject a fake.
@@ -62,6 +93,9 @@ type Server struct {
 	// decisions and returns a would-do result instead. It NEVER relaxes the
 	// gate: denied calls remain denied with zero I/O.
 	dryRun bool
+	// logLimits controls the tail-line and byte caps applied to k8s_logs output.
+	// Normalized by New via normalizeLogLimits so the zero value is safe.
+	logLimits LogLimits
 }
 
 // Option configures a [Server] at construction. Use functional options so the
@@ -91,6 +125,11 @@ func WithVersion(v string) Option {
 	}
 }
 
+// WithLogLimits sets the k8s_logs caps. Non-positive fields keep the default.
+func WithLogLimits(l LogLimits) Option {
+	return func(s *Server) { s.logLimits = l }
+}
+
 // New builds a Server, registering all kubeleash tools on a fresh MCP server.
 // Both engine and factory are required; passing nil for either is a programming
 // error and will surface as a panic on first use rather than a silent
@@ -106,6 +145,8 @@ func New(engine *policy.Engine, factory ClientFactory, opts ...Option) *Server {
 	for _, opt := range opts {
 		opt(s)
 	}
+
+	s.logLimits = normalizeLogLimits(s.logLimits)
 
 	// Build the server after options so the reported version reflects WithVersion.
 	s.srv = mcp.NewServer(&mcp.Implementation{Name: "kubeleash", Version: s.version}, nil)

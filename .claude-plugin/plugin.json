@@ -17,7 +17,13 @@
       "args": [
         "${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs",
         "--policy",
-        "${user_config.policy_path}"
+        "${user_config.policy_path}",
+        "--logs-default-tail-lines",
+        "${user_config.logs_default_tail_lines}",
+        "--logs-max-tail-lines",
+        "${user_config.logs_max_tail_lines}",
+        "--logs-max-bytes",
+        "${user_config.logs_max_bytes}"
       ],
       "env": {
         "KUBECONFIG": "${user_config.kubeconfig_path}"
@@ -38,6 +44,30 @@
       "description": "Path to the kubeconfig kubeleash should use. Defaults to ~/.kube/config.",
       "required": false,
       "default": "${HOME}/.kube/config"
+    },
+    "logs_default_tail_lines": {
+      "type": "number",
+      "title": "Logs: default tail lines",
+      "description": "Lines k8s_logs returns when the caller omits tailLines.",
+      "required": false,
+      "default": 100,
+      "min": 1
+    },
+    "logs_max_tail_lines": {
+      "type": "number",
+      "title": "Logs: max tail lines",
+      "description": "Upper bound a k8s_logs caller may request.",
+      "required": false,
+      "default": 2000,
+      "min": 1
+    },
+    "logs_max_bytes": {
+      "type": "number",
+      "title": "Logs: max bytes",
+      "description": "Hard byte cap on k8s_logs output, to protect the agent context.",
+      "required": false,
+      "default": 262144,
+      "min": 1
     }
   }
 }

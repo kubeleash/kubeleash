@@ -12,9 +12,11 @@
 // namespace-narrowing axis depends on [Request.ClusterScoped] being correct, so
 // any ambiguity in resolution is reported as an error rather than guessed.
 //
-// logs/exec/scale subresource mechanics are intentionally NOT part of this
-// interface: they require pod/subresource plumbing the MCP layer will flesh out
-// later. They are omitted rather than stubbed so nothing silently fails open.
+// Logs and Scale reach subresources the dynamic client cannot: Logs uses a
+// typed clientset (the log subresource), Scale merge-patches the scale
+// subresource. exec is intentionally NOT yet part of this interface — it needs
+// pod/exec stream plumbing the MCP layer will flesh out later, and is omitted
+// rather than stubbed so nothing silently fails open.
 package kube
 
 import (
@@ -67,6 +69,17 @@ func (s Scope) String() string {
 	}
 }
 
+// LogsOptions bounds a one-shot pod log read. Following/streaming is
+// intentionally unsupported (MCP is request/response).
+type LogsOptions struct {
+	Container    string
+	TailLines    *int64
+	Previous     bool
+	SinceSeconds *int64
+	Timestamps   bool
+	LimitBytes   *int64
+}
+
 // Client is the kube-layer surface the MCP layer depends on. One Client is
 // scoped to exactly one kube context. Implementations must perform zero cluster
 // I/O until a method that needs the cluster is called, so a denied request
@@ -101,4 +114,12 @@ type Client interface {
 	// Delete removes a single object. namespace must be "" for cluster-scoped
 	// resources.
 	Delete(ctx context.Context, res policy.Resource, namespace, name string) error
+
+	// Scale sets the desired replica count via the resource's scale subresource.
+	// res must have a scale subresource (Deployment, StatefulSet, ReplicaSet, RC,
+	// or a scalable CRD); otherwise the API returns a clear error.
+	Scale(ctx context.Context, res policy.Resource, namespace, name string, replicas int32) error
+
+	// Logs reads a pod's logs (one-shot, bounded by opts).
+	Logs(ctx context.Context, namespace, name string, opts LogsOptions) (string, error)
 }

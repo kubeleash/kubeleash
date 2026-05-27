@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -15,6 +16,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 
@@ -25,12 +27,15 @@ import (
 const fieldManager = "kubeleash"
 
 // client is the concrete [Client] for one kube context. It holds a dynamic
-// client and a RESTMapper backed by cached discovery; construction itself does
-// not contact the cluster (discovery is lazy via the deferred mapper).
+// client, a typed clientset (for subresources the dynamic client can't reach,
+// e.g. pod logs), and a RESTMapper backed by cached discovery; construction
+// itself does not contact the cluster (discovery is lazy via the deferred
+// mapper).
 type client struct {
 	contextName string
 	dyn         dynamic.Interface
 	mapper      *restmapper.DeferredDiscoveryRESTMapper
+	clientset   kubernetes.Interface
 }
 
 // Context returns the resolved kube context name this client is scoped to.
@@ -48,12 +53,18 @@ func newClient(contextName string, cfg *rest.Config) (*client, error) {
 		return nil, err
 	}
 
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("kube: build clientset for context %q: %w", contextName, err)
+	}
+
 	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(disco))
 
 	return &client{
 		contextName: contextName,
 		dyn:         dyn,
 		mapper:      mapper,
+		clientset:   clientset,
 	}, nil
 }
 
@@ -223,4 +234,42 @@ func (c *client) Delete(ctx context.Context, res policy.Resource, namespace, nam
 	}
 
 	return nil
+}
+
+// Scale implements [Client] by merge-patching the scale subresource.
+func (c *client) Scale(ctx context.Context, res policy.Resource, namespace, name string, replicas int32) error {
+	patch := []byte(fmt.Sprintf(`{"spec":{"replicas":%d}}`, replicas))
+
+	_, err := c.resourceInterface(res, namespace).Patch(
+		ctx, name, types.MergePatchType, patch,
+		metav1.PatchOptions{FieldManager: fieldManager}, "scale",
+	)
+	if err != nil {
+		return fmt.Errorf("kube: scale %s %q: %w", res.Plural, name, err)
+	}
+
+	return nil
+}
+
+// podLogOptions maps kubeleash's LogsOptions to the corev1 type.
+func podLogOptions(opts LogsOptions) *corev1.PodLogOptions {
+	return &corev1.PodLogOptions{
+		Container:    opts.Container,
+		Previous:     opts.Previous,
+		Timestamps:   opts.Timestamps,
+		TailLines:    opts.TailLines,
+		SinceSeconds: opts.SinceSeconds,
+		LimitBytes:   opts.LimitBytes,
+	}
+}
+
+// Logs implements [Client] via the typed clientset (the dynamic client cannot
+// read the log subresource).
+func (c *client) Logs(ctx context.Context, namespace, name string, opts LogsOptions) (string, error) {
+	raw, err := c.clientset.CoreV1().Pods(namespace).GetLogs(name, podLogOptions(opts)).DoRaw(ctx)
+	if err != nil {
+		return "", fmt.Errorf("kube: logs %q: %w", name, err)
+	}
+
+	return string(raw), nil
 }
