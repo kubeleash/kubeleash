@@ -12,9 +12,11 @@
 // namespace-narrowing axis depends on [Request.ClusterScoped] being correct, so
 // any ambiguity in resolution is reported as an error rather than guessed.
 //
-// logs/exec/scale subresource mechanics are intentionally NOT part of this
-// interface: they require pod/subresource plumbing the MCP layer will flesh out
-// later. They are omitted rather than stubbed so nothing silently fails open.
+// Logs and Scale reach subresources the dynamic client cannot: Logs uses a
+// typed clientset (the log subresource), Scale merge-patches the scale
+// subresource. exec is intentionally NOT yet part of this interface — it needs
+// pod/exec stream plumbing the MCP layer will flesh out later, and is omitted
+// rather than stubbed so nothing silently fails open.
 package kube
 
 import (
