@@ -40,6 +40,15 @@ native RBAC can't express for this use case:
 - **Block destructive verbs** (`delete`/`exec`/…) as a safety net against agent
   mistakes and prompt injection.
 
+## What kubeleash enforces
+
+kubeleash governs only the calls routed **through** it. It provides a hard
+guarantee when it is the agent's *sole* path to the cluster. An agent that also
+has shell access (raw `kubectl`, `oc`, the API) can step around it, so in a
+shell-enabled assistant kubeleash is advisory — pair it with the
+`using-kubeleash` skill, which instructs the agent to stop (not reach for
+kubectl) when the leash is unavailable.
+
 ## Policy in 10 seconds
 
 ```yaml
