@@ -23,7 +23,11 @@
         "--logs-max-tail-lines",
         "${user_config.logs_max_tail_lines}",
         "--logs-max-bytes",
-        "${user_config.logs_max_bytes}"
+        "${user_config.logs_max_bytes}",
+        "--exec-timeout",
+        "${user_config.exec_timeout_seconds}s",
+        "--exec-max-bytes",
+        "${user_config.exec_max_bytes}"
       ],
       "env": {
         "KUBECONFIG": "${user_config.kubeconfig_path}"
@@ -65,6 +69,22 @@
       "type": "number",
       "title": "Logs: max bytes",
       "description": "Hard byte cap on k8s_logs output, to protect the agent context.",
+      "required": false,
+      "default": 262144,
+      "min": 1
+    },
+    "exec_timeout_seconds": {
+      "type": "number",
+      "title": "Exec: timeout (seconds)",
+      "description": "Max wall-clock seconds for a single k8s_exec command.",
+      "required": false,
+      "default": 30,
+      "min": 1
+    },
+    "exec_max_bytes": {
+      "type": "number",
+      "title": "Exec: max bytes",
+      "description": "Hard byte cap on each of k8s_exec's stdout/stderr.",
       "required": false,
       "default": 262144,
       "min": 1

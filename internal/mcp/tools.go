@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -422,11 +423,6 @@ func (s *Server) deleteHandler(ctx context.Context, _ *mcp.CallToolRequest, args
 	return textResult(fmt.Sprintf("deleted %s %q", g.resource.Plural, args.Name)), nil, nil
 }
 
-// execHandler runs the FULL policy gate (so the verb wiring and the
-// zero-I/O-on-deny invariant are exercised) but returns a clear "not yet
-// implemented" error after policy approval. The kube Client interface does not
-// yet expose the exec subresource (see internal/kube/kube.go).
-
 func (s *Server) logsHandler(ctx context.Context, _ *mcp.CallToolRequest, args logsArgs) (*mcp.CallToolResult, any, error) {
 	if err := requireName("logs", args.Name); err != nil {
 		return nil, nil, err
@@ -481,11 +477,98 @@ func (s *Server) execHandler(ctx context.Context, _ *mcp.CallToolRequest, args e
 		return nil, nil, fmt.Errorf("mcp: exec: command is required")
 	}
 
-	if _, err := s.gate(ctx, args.resourceArgs, policy.VerbExec); err != nil {
+	g, err := s.gate(ctx, args.resourceArgs, policy.VerbExec)
+	if err != nil {
 		return nil, nil, err
 	}
 
-	return nil, nil, fmt.Errorf("mcp: exec: not yet implemented (policy permitted)")
+	if g.resource.Group != "" || g.resource.Plural != "pods" {
+		return nil, nil, fmt.Errorf("mcp: exec: only supported on pods, got %q", g.resource.Plural)
+	}
+
+	if g.dryRun {
+		return wouldDo(g.verb, g.resource, g.namespace, args.Name), nil, nil
+	}
+
+	container, err := s.resolveExecContainer(ctx, g, args.Name, args.Container)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	execCtx, cancel := context.WithTimeout(ctx, s.execLimits.Timeout)
+	defer cancel()
+
+	res, err := g.client.Exec(execCtx, g.namespace, args.Name, kube.ExecOptions{
+		Container: container,
+		Command:   args.Command,
+		MaxBytes:  s.execLimits.MaxBytes,
+	})
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, nil, fmt.Errorf("mcp: exec: timed out after %s", s.execLimits.Timeout)
+		}
+
+		return nil, nil, fmt.Errorf("mcp: exec: %w", err)
+	}
+
+	return textResult(renderExec(res, s.execLimits.MaxBytes)), nil, nil
+}
+
+// resolveExecContainer reads the pod and chooses the container to exec into:
+// the only container when one exists, the requested one if present, otherwise
+// an error that lists the choices. The Get runs only after the exec gate has
+// allowed the call, so a denied exec performs zero cluster I/O.
+func (s *Server) resolveExecContainer(ctx context.Context, g gateResult, podName, requested string) (string, error) {
+	pod, err := g.client.Get(ctx, g.resource, g.namespace, podName)
+	if err != nil {
+		return "", fmt.Errorf("mcp: exec: get pod %q: %w", podName, err)
+	}
+
+	raw, _, _ := unstructured.NestedSlice(pod.Object, "spec", "containers")
+
+	var names []string
+	for _, c := range raw {
+		if m, ok := c.(map[string]any); ok {
+			if n, ok := m["name"].(string); ok {
+				names = append(names, n)
+			}
+		}
+	}
+
+	if requested != "" {
+		for _, n := range names {
+			if n == requested {
+				return requested, nil
+			}
+		}
+
+		return "", fmt.Errorf("mcp: exec: container %q not found in pod %q; available: %s", requested, podName, strings.Join(names, ", "))
+	}
+
+	switch len(names) {
+	case 0:
+		return "", fmt.Errorf("mcp: exec: pod %q has no containers", podName)
+	case 1:
+		return names[0], nil
+	default:
+		return "", fmt.Errorf("mcp: exec: pod %q has multiple containers, specify one: %s", podName, strings.Join(names, ", "))
+	}
+}
+
+// renderExec formats an ExecResult as a labelled text block. Per-stream
+// truncation is noted in the relevant section header.
+func renderExec(r kube.ExecResult, maxBytes int64) string {
+	stdoutHdr := "--- stdout ---"
+	if r.StdoutTruncated {
+		stdoutHdr = fmt.Sprintf("--- stdout (truncated at %d bytes) ---", maxBytes)
+	}
+
+	stderrHdr := "--- stderr ---"
+	if r.StderrTruncated {
+		stderrHdr = fmt.Sprintf("--- stderr (truncated at %d bytes) ---", maxBytes)
+	}
+
+	return fmt.Sprintf("exit code: %d\n%s\n%s\n%s\n%s", r.ExitCode, stdoutHdr, r.Stdout, stderrHdr, r.Stderr)
 }
 
 func (s *Server) scaleHandler(ctx context.Context, _ *mcp.CallToolRequest, args scaleArgs) (*mcp.CallToolResult, any, error) {

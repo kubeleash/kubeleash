@@ -280,6 +280,28 @@ func TestRunInvalidLogLimits(t *testing.T) {
 	}
 }
 
+func TestRunInvalidExecLimits(t *testing.T) {
+	t.Setenv(policyEnvVar, "")
+	dir := t.TempDir()
+	pol := filepath.Join(dir, "p.yaml")
+	if err := os.WriteFile(pol, []byte("policies: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+
+	// zero timeout -> error
+	if err := run(context.Background(),
+		[]string{"--policy", pol, "--exec-timeout", "0s"}, &out, &errOut); err == nil {
+		t.Fatal("want error when --exec-timeout is not positive")
+	}
+
+	// non-positive byte cap -> error
+	if err := run(context.Background(),
+		[]string{"--policy", pol, "--exec-max-bytes", "0"}, &out, &errOut); err == nil {
+		t.Fatal("want error when --exec-max-bytes < 1")
+	}
+}
+
 func TestRunPolicyFromEnv(t *testing.T) {
 	path := writeTempPolicy(t, validPolicy)
 	t.Setenv(policyEnvVar, path)

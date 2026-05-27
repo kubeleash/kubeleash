@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"gopkg.in/yaml.v3"
@@ -71,6 +72,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		logsDefaultTail = fs.Int64("logs-default-tail-lines", 100, "k8s_logs: lines returned when the caller omits tailLines")
 		logsMaxTail     = fs.Int64("logs-max-tail-lines", 2000, "k8s_logs: upper bound on a caller's tailLines")
 		logsMaxBytes    = fs.Int64("logs-max-bytes", 256*1024, "k8s_logs: hard byte cap on output")
+		execTimeout     = fs.Duration("exec-timeout", 30*time.Second, "k8s_exec: max wall-clock per command")
+		execMaxBytes    = fs.Int64("exec-max-bytes", 256*1024, "k8s_exec: hard byte cap on each of stdout/stderr")
 	)
 
 	if err := fs.Parse(args); err != nil {
@@ -95,6 +98,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if *logsDefaultTail > *logsMaxTail {
 		return fmt.Errorf("--logs-default-tail-lines (%d) cannot exceed --logs-max-tail-lines (%d)", *logsDefaultTail, *logsMaxTail)
+	}
+
+	if *execTimeout <= 0 {
+		return fmt.Errorf("--exec-timeout must be positive (got %s)", *execTimeout)
+	}
+	if *execMaxBytes < 1 {
+		return fmt.Errorf("--exec-max-bytes must be >= 1 (got %d)", *execMaxBytes)
 	}
 
 	resolvedPolicy, err := resolvePolicyPath(*policyPath, os.Getenv(policyEnvVar))
@@ -132,6 +142,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			DefaultTailLines: *logsDefaultTail,
 			MaxTailLines:     *logsMaxTail,
 			MaxBytes:         *logsMaxBytes,
+		}),
+		intmcp.WithExecLimits(intmcp.ExecLimits{
+			Timeout:  *execTimeout,
+			MaxBytes: *execMaxBytes,
 		}),
 	)
 

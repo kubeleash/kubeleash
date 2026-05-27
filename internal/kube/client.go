@@ -3,7 +3,9 @@
 package kube
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -17,8 +19,11 @@ import (
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
+	"k8s.io/client-go/tools/remotecommand"
+	utilexec "k8s.io/client-go/util/exec"
 
 	"github.com/kubeleash/kubeleash/internal/policy"
 )
@@ -36,6 +41,7 @@ type client struct {
 	dyn         dynamic.Interface
 	mapper      *restmapper.DeferredDiscoveryRESTMapper
 	clientset   kubernetes.Interface
+	restConfig  *rest.Config // retained for exec (SPDY needs the full config)
 }
 
 // Context returns the resolved kube context name this client is scoped to.
@@ -65,6 +71,7 @@ func newClient(contextName string, cfg *rest.Config) (*client, error) {
 		dyn:         dyn,
 		mapper:      mapper,
 		clientset:   clientset,
+		restConfig:  cfg,
 	}, nil
 }
 
@@ -272,4 +279,83 @@ func (c *client) Logs(ctx context.Context, namespace, name string, opts LogsOpti
 	}
 
 	return string(raw), nil
+}
+
+// limitedWriter buffers up to max bytes and discards the rest, recording that
+// truncation happened. It always reports the full input length from Write so a
+// streaming source (remotecommand) never sees a short write and aborts. Each
+// instance is written by a single stream goroutine, so it needs no locking.
+type limitedWriter struct {
+	buf       bytes.Buffer
+	max       int64
+	truncated bool
+}
+
+func (w *limitedWriter) Write(p []byte) (int, error) {
+	remaining := w.max - int64(w.buf.Len())
+	if remaining <= 0 {
+		w.truncated = true
+		return len(p), nil
+	}
+	if int64(len(p)) > remaining {
+		w.buf.Write(p[:remaining])
+		w.truncated = true
+		return len(p), nil
+	}
+
+	return w.buf.Write(p)
+}
+
+// podExecOptions maps kubeleash's ExecOptions to the corev1 type. One-shot:
+// Stdout/Stderr on, Stdin/TTY off.
+func podExecOptions(opts ExecOptions) *corev1.PodExecOptions {
+	return &corev1.PodExecOptions{
+		Container: opts.Container,
+		Command:   opts.Command,
+		Stdin:     false,
+		Stdout:    true,
+		Stderr:    true,
+		TTY:       false,
+	}
+}
+
+// Exec implements [Client] via client-go's SPDY remotecommand executor (the
+// only client able to stream the exec subresource).
+func (c *client) Exec(ctx context.Context, namespace, name string, opts ExecOptions) (ExecResult, error) {
+	req := c.clientset.CoreV1().RESTClient().Post().
+		Resource("pods").Name(name).Namespace(namespace).SubResource("exec").
+		VersionedParams(podExecOptions(opts), scheme.ParameterCodec)
+
+	exec, err := remotecommand.NewSPDYExecutor(c.restConfig, "POST", req.URL())
+	if err != nil {
+		return ExecResult{}, fmt.Errorf("kube: exec %q: %w", name, err)
+	}
+
+	outW := &limitedWriter{max: opts.MaxBytes}
+	errW := &limitedWriter{max: opts.MaxBytes}
+
+	streamErr := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdout: outW,
+		Stderr: errW,
+	})
+
+	res := ExecResult{
+		Stdout:          outW.buf.String(),
+		Stderr:          errW.buf.String(),
+		StdoutTruncated: outW.truncated,
+		StderrTruncated: errW.truncated,
+	}
+
+	if streamErr != nil {
+		var codeErr utilexec.CodeExitError
+		if errors.As(streamErr, &codeErr) {
+			res.ExitCode = codeErr.ExitStatus()
+
+			return res, nil
+		}
+
+		return ExecResult{}, fmt.Errorf("kube: exec %q: %w", name, streamErr)
+	}
+
+	return res, nil
 }

@@ -14,9 +14,9 @@
 //
 // Logs and Scale reach subresources the dynamic client cannot: Logs uses a
 // typed clientset (the log subresource), Scale merge-patches the scale
-// subresource. exec is intentionally NOT yet part of this interface — it needs
-// pod/exec stream plumbing the MCP layer will flesh out later, and is omitted
-// rather than stubbed so nothing silently fails open.
+// subresource. Exec streams a one-shot command via client-go's SPDY
+// remotecommand executor, capturing stdout/stderr (each capped) and the exit
+// code.
 package kube
 
 import (
@@ -67,6 +67,24 @@ func (s Scope) String() string {
 	default:
 		return "unknown"
 	}
+}
+
+// ExecOptions bounds a one-shot, non-interactive command exec. There is no TTY
+// and no stdin; following/streaming back-and-forth is intentionally unsupported.
+type ExecOptions struct {
+	Container string   // concrete container; the caller resolves it
+	Command   []string // argv; must be non-empty
+	MaxBytes  int64    // hard cap applied to EACH of stdout/stderr captured
+}
+
+// ExecResult is the outcome of a command that actually ran. A non-zero ExitCode
+// is normal data, not an error.
+type ExecResult struct {
+	Stdout          string
+	Stderr          string
+	ExitCode        int
+	StdoutTruncated bool
+	StderrTruncated bool
 }
 
 // LogsOptions bounds a one-shot pod log read. Following/streaming is
@@ -122,4 +140,10 @@ type Client interface {
 
 	// Logs reads a pod's logs (one-shot, bounded by opts).
 	Logs(ctx context.Context, namespace, name string, opts LogsOptions) (string, error)
+
+	// Exec runs Command in the named pod/container (one-shot, no TTY, no stdin),
+	// capturing stdout/stderr (each capped at opts.MaxBytes) and the command's
+	// exit code. A non-zero exit is returned as ExecResult.ExitCode with a nil
+	// error; only transport/timeout/auth failures return an error.
+	Exec(ctx context.Context, namespace, name string, opts ExecOptions) (ExecResult, error)
 }

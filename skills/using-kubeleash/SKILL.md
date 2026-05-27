@@ -47,7 +47,7 @@ Every resource tool shares a common shape:
 | `k8s_delete` | Delete one object by `name`. |
 | `k8s_logs` | Read a pod's logs (one-shot). Bounded: `tailLines` (default 100, operator-capped), plus `container`, `previous`, `sinceSeconds`, `timestamps`. |
 | `k8s_scale` | Set a workload's replica count via the scale subresource. Gated as the `scale` verb (distinct from `update`). |
-| `k8s_exec` | **Gated but not yet implemented** — passes policy and returns "not yet implemented." Don't rely on it. |
+| `k8s_exec` | Run a one-shot command in a pod container (no TTY, no stdin). Returns exit code + stdout + stderr; a non-zero exit is data, not an error. Bounded by an operator timeout and output byte cap. Specify `container` when the pod has more than one. |
 
 ## Reading outcomes
 
@@ -63,8 +63,8 @@ A denied call returns one of two reasons — respond to them differently:
 
 - **Read before you write.** Use `k8s_get` / `k8s_list` to understand current
   state before any `k8s_apply` or `k8s_delete`.
-- **Confirm destructive intent.** Before `k8s_delete` or `k8s_scale` (and `exec`
-  once available), state what you are about to change and why, and prefer the
+- **Confirm destructive intent.** Before `k8s_delete`, `k8s_scale`, or
+  `k8s_exec`, state what you are about to change and why, and prefer the
   narrowest action that accomplishes the goal.
 - **`apply` is create-or-update.** It server-side-applies the manifest: an
   existing object is updated, a missing one is created — each gated by the
