@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	clienttesting "k8s.io/client-go/testing"
 
 	"github.com/kubeleash/kubeleash/internal/policy"
@@ -51,5 +52,35 @@ func TestScalePatchesScaleSubresource(t *testing.T) {
 	}
 	if !patched {
 		t.Fatalf("no Patch on the scale subresource was issued; actions=%v", dc.Actions())
+	}
+}
+
+func TestPodLogOptionsMapping(t *testing.T) {
+	tail := int64(50)
+	since := int64(120)
+	limit := int64(4096)
+	got := podLogOptions(LogsOptions{
+		Container: "app", TailLines: &tail, Previous: true,
+		SinceSeconds: &since, Timestamps: true, LimitBytes: &limit,
+	})
+	if got.Container != "app" || !got.Previous || !got.Timestamps {
+		t.Errorf("flags not mapped: %+v", got)
+	}
+	if got.TailLines == nil || *got.TailLines != 50 ||
+		got.SinceSeconds == nil || *got.SinceSeconds != 120 ||
+		got.LimitBytes == nil || *got.LimitBytes != 4096 {
+		t.Errorf("pointers not mapped: %+v", got)
+	}
+}
+
+func TestLogsReturnsText(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset()
+	c := &client{contextName: "t", clientset: cs}
+	out, err := c.Logs(context.Background(), "default", "web", LogsOptions{})
+	if err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+	if out == "" {
+		t.Errorf("Logs returned empty; fake clientset returns canned output")
 	}
 }

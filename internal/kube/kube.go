@@ -67,6 +67,17 @@ func (s Scope) String() string {
 	}
 }
 
+// LogsOptions bounds a one-shot pod log read. Following/streaming is
+// intentionally unsupported (MCP is request/response).
+type LogsOptions struct {
+	Container    string
+	TailLines    *int64
+	Previous     bool
+	SinceSeconds *int64
+	Timestamps   bool
+	LimitBytes   *int64
+}
+
 // Client is the kube-layer surface the MCP layer depends on. One Client is
 // scoped to exactly one kube context. Implementations must perform zero cluster
 // I/O until a method that needs the cluster is called, so a denied request
@@ -106,4 +117,7 @@ type Client interface {
 	// res must have a scale subresource (Deployment, StatefulSet, ReplicaSet, RC,
 	// or a scalable CRD); otherwise the API returns a clear error.
 	Scale(ctx context.Context, res policy.Resource, namespace, name string, replicas int32) error
+
+	// Logs reads a pod's logs (one-shot, bounded by opts).
+	Logs(ctx context.Context, namespace, name string, opts LogsOptions) (string, error)
 }
