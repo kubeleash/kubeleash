@@ -52,6 +52,17 @@ type fakeClient struct {
 	allowDelete bool
 	allowScale  bool
 	allowLogs   bool
+	allowExec   bool
+
+	execN        int
+	gotContainer string
+	gotCommand   []string
+	execResult   kube.ExecResult
+	execErr      error
+
+	// getObject, when set, is returned by Get as the object body (used to give
+	// exec's container resolution a pod with a spec.containers list).
+	getObject map[string]any
 
 	// getReturnsNotFound makes Get behave as "object absent" for apply existence
 	// checks (a genuine apierrors NotFound).
@@ -104,6 +115,10 @@ func (f *fakeClient) Get(_ context.Context, res policy.Resource, ns, name string
 
 	if f.getReturnsNotFound {
 		return nil, apierrors.NewNotFound(schema.GroupResource{Resource: res.Plural}, name)
+	}
+
+	if f.getObject != nil {
+		return &unstructured.Unstructured{Object: f.getObject}, nil
 	}
 
 	return &unstructured.Unstructured{Object: map[string]any{"kind": res.Kind, "metadata": map[string]any{"name": name}}}, nil
@@ -168,9 +183,21 @@ func (f *fakeClient) Scale(_ context.Context, res policy.Resource, ns, name stri
 	return nil
 }
 
-func (f *fakeClient) Exec(_ context.Context, _, _ string, _ kube.ExecOptions) (kube.ExecResult, error) {
-	f.t.Errorf("SECURITY INVARIANT VIOLATED: kube Exec called unexpectedly")
-	return kube.ExecResult{}, nil
+func (f *fakeClient) Exec(_ context.Context, ns, name string, opts kube.ExecOptions) (kube.ExecResult, error) {
+	f.mu.Lock()
+	f.execN++
+	f.gotNamespace, f.gotName, f.gotContainer, f.gotCommand = ns, name, opts.Container, opts.Command
+	f.mu.Unlock()
+
+	if !f.allowExec {
+		f.t.Errorf("SECURITY INVARIANT VIOLATED: kube Exec called on a denied path")
+	}
+
+	if f.execErr != nil {
+		return kube.ExecResult{}, f.execErr
+	}
+
+	return f.execResult, nil
 }
 
 func (f *fakeClient) Logs(_ context.Context, ns, name string, opts kube.LogsOptions) (string, error) {
@@ -318,6 +345,14 @@ policies:
     allow:
       resources: ["*"]
       verbs: [logs]
+`
+
+const allowExecPolicy = `
+policies:
+  - contexts: ".*"
+    allow:
+      resources: ["*"]
+      verbs: [get, exec]
 `
 
 // ---------------------------------------------------------------------------
@@ -924,6 +959,143 @@ func TestListRendersItems(t *testing.T) {
 		if !strings.Contains(txt, want) {
 			t.Errorf("list output missing %q; got:\n%s", want, txt)
 		}
+	}
+}
+
+func onePodObject(containers ...string) map[string]any {
+	cs := make([]any, 0, len(containers))
+	for _, name := range containers {
+		cs = append(cs, map[string]any{"name": name})
+	}
+
+	return map[string]any{
+		"kind":     "Pod",
+		"metadata": map[string]any{"name": "web"},
+		"spec":     map[string]any{"containers": cs},
+	}
+}
+
+func TestExecAllowedRendersResult(t *testing.T) {
+	t.Parallel()
+	fc := &fakeClient{
+		t: t, context: "c", res: policy.Resource{Plural: "pods"}, scope: kube.ScopeNamespaced,
+		allowGet: true, allowExec: true,
+		getObject:  onePodObject("app"),
+		execResult: kube.ExecResult{Stdout: "hello\n", Stderr: "", ExitCode: 0},
+	}
+	cs := connect(t, mustEngine(t, allowExecPolicy), &fakeFactory{client: fc})
+	res := call(t, cs, "k8s_exec", map[string]any{
+		"resource": "pods", "name": "web", "namespace": "default",
+		"command": []any{"echo", "hello"},
+	})
+	got := resultText(t, res)
+	if !strings.Contains(got, "exit code: 0") || !strings.Contains(got, "hello") {
+		t.Errorf("result = %q, want exit code 0 + stdout", got)
+	}
+	if fc.execN != 1 || fc.gotContainer != "app" {
+		t.Errorf("execN=%d container=%q, want 1 and resolved single container 'app'", fc.execN, fc.gotContainer)
+	}
+}
+
+func TestExecNonZeroExitIsData(t *testing.T) {
+	t.Parallel()
+	fc := &fakeClient{
+		t: t, context: "c", res: policy.Resource{Plural: "pods"}, scope: kube.ScopeNamespaced,
+		allowGet: true, allowExec: true,
+		getObject:  onePodObject("app"),
+		execResult: kube.ExecResult{Stderr: "boom\n", ExitCode: 2},
+	}
+	cs := connect(t, mustEngine(t, allowExecPolicy), &fakeFactory{client: fc})
+	res := call(t, cs, "k8s_exec", map[string]any{
+		"resource": "pods", "name": "web", "namespace": "default", "command": []any{"false"},
+	})
+	if res.IsError {
+		t.Fatalf("a non-zero exit must NOT be a tool error; got IsError result: %q", resultText(t, res))
+	}
+	if got := resultText(t, res); !strings.Contains(got, "exit code: 2") || !strings.Contains(got, "boom") {
+		t.Errorf("result = %q, want exit code 2 + stderr", got)
+	}
+}
+
+func TestExecMultiContainerNeedsSelection(t *testing.T) {
+	t.Parallel()
+	fc := &fakeClient{
+		t: t, context: "c", res: policy.Resource{Plural: "pods"}, scope: kube.ScopeNamespaced,
+		allowGet: true, allowExec: true,
+		getObject: onePodObject("app", "sidecar"),
+	}
+	cs := connect(t, mustEngine(t, allowExecPolicy), &fakeFactory{client: fc})
+	res := call(t, cs, "k8s_exec", map[string]any{
+		"resource": "pods", "name": "web", "namespace": "default", "command": []any{"sh"},
+	})
+	if !res.IsError {
+		t.Fatalf("multi-container pod without a container arg must error")
+	}
+	got := resultText(t, res)
+	if !strings.Contains(got, "app") || !strings.Contains(got, "sidecar") {
+		t.Errorf("error %q should list the containers", got)
+	}
+	if fc.execN != 0 {
+		t.Errorf("execN=%d, want 0 (no exec when container ambiguous)", fc.execN)
+	}
+}
+
+func TestExecGatedAsExecNotLogs(t *testing.T) {
+	t.Parallel()
+	// Policy grants logs (and get), NOT exec; exec must be DENIED with zero I/O.
+	fc := &fakeClient{
+		t: t, context: "c", res: policy.Resource{Plural: "pods"}, scope: kube.ScopeNamespaced,
+		allowGet: false, allowExec: false,
+	}
+	cs := connect(t, mustEngine(t, allowLogsPolicy), &fakeFactory{client: fc})
+	res := call(t, cs, "k8s_exec", map[string]any{
+		"resource": "pods", "name": "web", "namespace": "default", "command": []any{"sh"},
+	})
+	if !res.IsError {
+		t.Fatalf("exec under a logs-only policy must be denied")
+	}
+	if fc.execN != 0 || fc.getN != 0 {
+		t.Errorf("execN=%d getN=%d, want 0/0 (zero I/O on deny — gate precedes container resolution)", fc.execN, fc.getN)
+	}
+}
+
+func TestExecTruncationNoted(t *testing.T) {
+	t.Parallel()
+	fc := &fakeClient{
+		t: t, context: "c", res: policy.Resource{Plural: "pods"}, scope: kube.ScopeNamespaced,
+		allowGet: true, allowExec: true,
+		getObject:  onePodObject("app"),
+		execResult: kube.ExecResult{Stdout: "partial", StdoutTruncated: true, ExitCode: 0},
+	}
+	cs := connect(t, mustEngine(t, allowExecPolicy), &fakeFactory{client: fc})
+	res := call(t, cs, "k8s_exec", map[string]any{
+		"resource": "pods", "name": "web", "namespace": "default", "command": []any{"cat", "/big"},
+	})
+	if got := resultText(t, res); !strings.Contains(got, "truncated") {
+		t.Errorf("result = %q, want a truncation note on stdout", got)
+	}
+}
+
+func TestExecTimeoutIsToolError(t *testing.T) {
+	t.Parallel()
+	// The kube Exec surfaces a per-call deadline as context.DeadlineExceeded;
+	// the handler must map it to a clear "timed out" tool error, not a generic
+	// failure (and never to a normal result).
+	fc := &fakeClient{
+		t: t, context: "c", res: policy.Resource{Plural: "pods"}, scope: kube.ScopeNamespaced,
+		allowGet: true, allowExec: true,
+		getObject: onePodObject("app"),
+		execErr:   context.DeadlineExceeded,
+	}
+	cs := connect(t, mustEngine(t, allowExecPolicy), &fakeFactory{client: fc})
+	res := call(t, cs, "k8s_exec", map[string]any{
+		"resource": "pods", "name": "web", "namespace": "default", "command": []any{"sleep", "999"},
+	})
+	if !res.IsError {
+		t.Fatalf("a timed-out exec must be a tool error")
+	}
+	if got := resultText(t, res); !strings.Contains(got, "timed out") {
+		t.Errorf("result = %q, want a timeout error", got)
 	}
 }
 
