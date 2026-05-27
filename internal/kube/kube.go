@@ -101,4 +101,9 @@ type Client interface {
 	// Delete removes a single object. namespace must be "" for cluster-scoped
 	// resources.
 	Delete(ctx context.Context, res policy.Resource, namespace, name string) error
+
+	// Scale sets the desired replica count via the resource's scale subresource.
+	// res must have a scale subresource (Deployment, StatefulSet, ReplicaSet, RC,
+	// or a scalable CRD); otherwise the API returns a clear error.
+	Scale(ctx context.Context, res policy.Resource, namespace, name string, replicas int32) error
 }

@@ -224,3 +224,18 @@ func (c *client) Delete(ctx context.Context, res policy.Resource, namespace, nam
 
 	return nil
 }
+
+// Scale implements [Client] by merge-patching the scale subresource.
+func (c *client) Scale(ctx context.Context, res policy.Resource, namespace, name string, replicas int32) error {
+	patch := []byte(fmt.Sprintf(`{"spec":{"replicas":%d}}`, replicas))
+
+	_, err := c.resourceInterface(res, namespace).Patch(
+		ctx, name, types.MergePatchType, patch,
+		metav1.PatchOptions{FieldManager: fieldManager}, "scale",
+	)
+	if err != nil {
+		return fmt.Errorf("kube: scale %s %q: %w", res.Plural, name, err)
+	}
+
+	return nil
+}
