@@ -13,6 +13,8 @@ test('policyPathFromArgs extracts --policy value', () => {
   assert.equal(policyPathFromArgs(['a', '--policy', '/q', 'b']), '/q');
   assert.equal(policyPathFromArgs(['--foo', 'bar']), null);
   assert.equal(policyPathFromArgs(['--policy']), null); // flag with no value
+  // empty value means "no path" — treated as an empty string, not null
+  assert.equal(policyPathFromArgs(['--policy=']), '');
 });
 
 test('expandTilde expands a leading ~ only', () => {
@@ -40,4 +42,17 @@ test('ensurePolicy: skipped on null, creates when missing, never overwrites', as
   await fs.writeFile(p, 'SENTINEL', { flag: 'w' });
   assert.equal(await ensurePolicy(p), 'exists');
   assert.equal(await fs.readFile(p, 'utf8'), 'SENTINEL'); // not overwritten
+});
+
+test('ensurePolicy expands a leading ~ before writing', async (t) => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'kl-home-'));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const orig = os.homedir;
+  os.homedir = () => home;            // expandTilde reads os.homedir()
+  t.after(() => { os.homedir = orig; });
+
+  const status = await ensurePolicy('~/.kubeleash/policy.yaml');
+  assert.equal(status, 'created');
+  const written = await fs.readFile(path.join(home, '.kubeleash/policy.yaml'), 'utf8');
+  assert.match(written, /verbs: \[get, list, watch\]/);
 });
