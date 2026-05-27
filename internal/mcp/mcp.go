@@ -26,8 +26,10 @@ import (
 	"github.com/kubeleash/kubeleash/internal/policy"
 )
 
-// version is the reported MCP server implementation version.
-const version = "0.2.1"
+// defaultVersion is the reported MCP server implementation version when none is
+// injected via [WithVersion] (e.g. unit tests). Production wires in the
+// build-stamped version from main so it tracks the release tag automatically.
+const defaultVersion = "dev"
 
 const (
 	defaultLogTailLines int64 = 100
@@ -80,6 +82,10 @@ type Server struct {
 	factory ClientFactory
 	srv     *mcp.Server
 
+	// version is the implementation version reported in the MCP initialize
+	// handshake. Defaults to defaultVersion; set via [WithVersion].
+	version string
+
 	// audit records every decision (allowed and denied). A nil *audit.Logger is
 	// a safe no-op, so the zero value of Server never panics on logging.
 	audit *audit.Logger
@@ -108,6 +114,17 @@ func WithDryRun(dryRun bool) Option {
 	return func(s *Server) { s.dryRun = dryRun }
 }
 
+// WithVersion sets the implementation version reported to MCP clients. An empty
+// value is ignored, keeping the default. Production passes the build-stamped
+// version so the reported version tracks the release tag.
+func WithVersion(v string) Option {
+	return func(s *Server) {
+		if v != "" {
+			s.version = v
+		}
+	}
+}
+
 // WithLogLimits sets the k8s_logs caps. Non-positive fields keep the default.
 func WithLogLimits(l LogLimits) Option {
 	return func(s *Server) { s.logLimits = l }
@@ -122,7 +139,7 @@ func New(engine *policy.Engine, factory ClientFactory, opts ...Option) *Server {
 	s := &Server{
 		engine:  engine,
 		factory: factory,
-		srv:     mcp.NewServer(&mcp.Implementation{Name: "kubeleash", Version: version}, nil),
+		version: defaultVersion,
 	}
 
 	for _, opt := range opts {
@@ -130,6 +147,9 @@ func New(engine *policy.Engine, factory ClientFactory, opts ...Option) *Server {
 	}
 
 	s.logLimits = normalizeLogLimits(s.logLimits)
+
+	// Build the server after options so the reported version reflects WithVersion.
+	s.srv = mcp.NewServer(&mcp.Implementation{Name: "kubeleash", Version: s.version}, nil)
 
 	s.registerTools()
 

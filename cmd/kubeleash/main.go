@@ -127,6 +127,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		engine, factory,
 		intmcp.WithAudit(logger),
 		intmcp.WithDryRun(*dryRun),
+		intmcp.WithVersion(version),
 		intmcp.WithLogLimits(intmcp.LogLimits{
 			DefaultTailLines: *logsDefaultTail,
 			MaxTailLines:     *logsMaxTail,
