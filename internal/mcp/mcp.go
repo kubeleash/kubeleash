@@ -27,7 +27,7 @@ import (
 )
 
 // version is the reported MCP server implementation version.
-const version = "0.1.0"
+const version = "0.2.1"
 
 // ClientFactory is the subset of [kube.Factory] the MCP layer depends on: it
 // hands out a [kube.Client] for a (possibly empty) context name. *kube.Factory
