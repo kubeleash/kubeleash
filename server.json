@@ -6,11 +6,11 @@
     "url": "https://github.com/kubeleash/kubeleash",
     "source": "github"
   },
-  "version": "0.1.0",
+  "version": "0.2.1",
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/kubeleash/kubeleash:0.1.0",
+      "identifier": "ghcr.io/kubeleash/kubeleash:0.2.1",
       "transport": {
         "type": "stdio"
       }
