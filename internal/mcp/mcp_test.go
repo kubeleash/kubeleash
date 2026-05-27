@@ -168,6 +168,11 @@ func (f *fakeClient) Scale(_ context.Context, res policy.Resource, ns, name stri
 	return nil
 }
 
+func (f *fakeClient) Exec(_ context.Context, _, _ string, _ kube.ExecOptions) (kube.ExecResult, error) {
+	f.t.Errorf("SECURITY INVARIANT VIOLATED: kube Exec called unexpectedly")
+	return kube.ExecResult{}, nil
+}
+
 func (f *fakeClient) Logs(_ context.Context, ns, name string, opts kube.LogsOptions) (string, error) {
 	f.mu.Lock()
 	f.logsN++
