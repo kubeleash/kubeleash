@@ -148,6 +148,16 @@ func (f *fakeClient) Delete(_ context.Context, res policy.Resource, ns, name str
 	return nil
 }
 
+func (f *fakeClient) Scale(_ context.Context, _ policy.Resource, _, _ string, _ int32) error {
+	f.t.Errorf("SECURITY INVARIANT VIOLATED: kube Scale called unexpectedly")
+	return nil
+}
+
+func (f *fakeClient) Logs(_ context.Context, _, _ string, _ kube.LogsOptions) (string, error) {
+	f.t.Errorf("SECURITY INVARIANT VIOLATED: kube Logs called unexpectedly")
+	return "", nil
+}
+
 // fakeFactory hands out a single fakeClient regardless of context.
 type fakeFactory struct {
 	client *fakeClient
